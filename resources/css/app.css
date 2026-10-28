@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+[data-payment-panel="qris"]:has([aria-label="QRIS simulation"]) {
+    display: none !important;
+}
+
+[x-cloak] { display: none !important; }
+
+@layer components {
+    .pos-input {
+        @apply w-full rounded-xl border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 transition focus:border-emerald-500 focus:ring-emerald-500;
+    }
+
+    .pos-button {
+        @apply inline-flex min-h-11 items-center justify-center rounded-xl px-4 py-3 text-sm font-extrabold transition;
+    }
+
+    .qty-button {
+        @apply grid h-8 w-8 place-items-center rounded-lg bg-white text-base font-extrabold text-emerald-700 ring-1 ring-emerald-100 transition hover:bg-emerald-100;
+    }
+}
