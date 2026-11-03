@@ -144,6 +144,7 @@ class JooalDemoSeeder extends Seeder
             foreach ($branches as $branch) {
                 $supplier = $suppliers[$branch->code];
                 $this->receiveOpeningStock($branch, $supplier, $owner, $ingredients);
+                $this->receiveDemoTopUp($branch, $supplier, $owner, $ingredients);
                 $branchProducts = $products[$branch->code];
                 foreach ($branchProducts as $index => $product) {
                     $this->syncBranchMenu($branch, $product['menu'], $product['price']);
@@ -183,12 +184,12 @@ class JooalDemoSeeder extends Seeder
         $transactions = Transaction::query()->whereIn('transaction_number', $legacyNumbers)->get();
         if ($transactions->isEmpty()) {
             $newTransactions = 0;
-            foreach (array_keys(self::BRANCHES) as $code) for ($day = 1; $day <= 10; $day++) for ($slot = 1; $slot <= 2; $slot++) {
+            foreach (array_keys(self::BRANCHES) as $code) for ($day = 1; $day <= 10; $day++) for ($slot = 1; $slot <= 3; $slot++) {
                 $number = 'JOOAL-'.substr($code, -3).'-202610'.str_pad((string) $day, 2, '0', STR_PAD_LEFT).'-'.str_pad((string) $slot, 2, '0', STR_PAD_LEFT);
                 if (Transaction::query()->where('transaction_number', $number)->exists()) $newTransactions++;
             }
             $newMenus = Menu::query()->where('slug', 'like', 'jooal-%')->count();
-            if ($newTransactions === 60 && $newMenus === 48
+            if (in_array($newTransactions, [60, 90], true) && $newMenus === 48
                 && StockReceipt::query()->where('receipt_number', 'like', 'JOOAL-STOCK-%')->count() === 3
                 && Ingredient::query()->where('slug', 'like', 'jooal-%')->count() === count(self::INGREDIENTS)) return;
             throw new RuntimeException('No complete audited legacy dataset or complete JOOAL dataset exists; no replacement was performed.');
@@ -284,12 +285,24 @@ class JooalDemoSeeder extends Seeder
 
     private function ensureCustomers($branches): array
     {
-        $names = ['Nadia Rahma', 'Rizky Mahendra', 'Salsa Kirana', 'Arga Prasetyo', 'Maya Puspita'];
+        $names = [
+            'JOOAL-001' => ['Nadia Rahma', 'Rizky Mahendra', 'Salsa Kirana', 'Arga Prasetyo', 'Maya Puspita', 'Dewi Anggraini', 'Farhan Akbar', 'Intan Permata', 'Kevin Wijaya', 'Larasati Putri'],
+            'JOOAL-002' => ['Nadia Rahma Gelato', 'Rizky Mahendra Gelato', 'Salsa Kirana Gelato', 'Arga Prasetyo Gelato', 'Maya Puspita Gelato', 'Naufal Ramadhan', 'Olivia Tan', 'Putri Maharani', 'Rafi Hidayat', 'Sekar Ayuningtyas'],
+            'JOOAL-003' => ['Nadia Rahma Coffee', 'Rizky Mahendra Coffee', 'Salsa Kirana Coffee', 'Arga Prasetyo Coffee', 'Maya Puspita Coffee', 'Tasya Amalia', 'Umar Faruq', 'Vina Oktaviani', 'Wahyu Prakoso', 'Yasmin Aulia'],
+        ];
         $result = [];
         foreach ($branches as $branch) {
-            foreach ($names as $i => $name) {
-                $email = strtolower(str_replace(' ', '.', $name)).'.'.substr($branch->code, -3).'@customer.example.test';
-                $customer = Customer::query()->firstOrCreate(['branch_id' => $branch->id, 'email' => $email], ['name' => $name, 'phone' => '0812'.substr($branch->code, -3).str_pad((string) ($i + 1), 4, '0', STR_PAD_LEFT), 'notes' => 'Pelanggan loyal; preferensi dicatat oleh tim cabang.', 'is_active' => true]);
+            foreach ($names[$branch->code] as $i => $name) {
+                $emailName = $i < 5 ? ['Nadia Rahma', 'Rizky Mahendra', 'Salsa Kirana', 'Arga Prasetyo', 'Maya Puspita'][$i] : $name;
+                $email = strtolower(str_replace(' ', '.', $emailName)).'.'.substr($branch->code, -3).'@customer.example.test';
+                $customer = Customer::query()->where('branch_id', $branch->id)->where('email', $email)->first();
+                if ($customer) {
+                    $legacyName = ['Nadia Rahma', 'Rizky Mahendra', 'Salsa Kirana', 'Arga Prasetyo', 'Maya Puspita'][$i] ?? $name;
+                    if (! in_array($customer->name, [$legacyName, $name], true) || ! $customer->is_active) throw new RuntimeException('Customer '.$email.' conflicts.');
+                    if ($customer->name !== $name) $customer->update(['name' => $name]);
+                } else {
+                    $customer = Customer::query()->create(['branch_id' => $branch->id, 'email' => $email, 'name' => $name, 'phone' => '0812'.substr($branch->code, -3).str_pad((string) ($i + 1), 4, '0', STR_PAD_LEFT), 'notes' => 'Pelanggan loyal; preferensi dicatat oleh tim cabang.', 'is_active' => true]);
+                }
                 if ($customer->name !== $name || ! $customer->is_active) throw new RuntimeException('Customer '.$email.' conflicts.');
                 $result[$branch->code][$i] = $customer;
             }
@@ -378,17 +391,28 @@ class JooalDemoSeeder extends Seeder
 
     private function ensureStaff($branches): array
     {
-        $names = ['manager' => 'Alya Putri', 'cashier' => 'Bima Santoso', 'inventory' => 'Citra Lestari'];
+        $names = [
+            'JOOAL-001' => ['manager' => 'Alya Putri', 'cashier' => 'Bima Santoso', 'inventory' => 'Citra Lestari'],
+            'JOOAL-002' => ['manager' => 'Dimas Pratama', 'cashier' => 'Nabila Sari', 'inventory' => 'Rangga Saputra'],
+            'JOOAL-003' => ['manager' => 'Fajar Nugroho', 'cashier' => 'Gita Maharani', 'inventory' => 'Hana Kusuma'],
+        ];
         $result = [];
-        foreach ($branches as $branch) foreach ($names as $role => $baseName) {
+        foreach ($branches as $branch) foreach ($names[$branch->code] as $role => $baseName) {
             $suffix = substr($branch->code, -3);
             $email = 'jooal.'.$role.'.'.$suffix.'@example.test';
-            $user = User::query()->where('email', 'demo-'.$role.'-'.$suffix.'@example.test')->first();
+            $legacyEmail = 'demo-'.$role.'-'.$suffix.'@example.test';
+            $legacyUser = User::query()->where('email', $legacyEmail)->first();
+            $currentUser = User::query()->where('email', $email)->first();
+            if ($legacyUser && $currentUser && (int) $legacyUser->id !== (int) $currentUser->id) throw new RuntimeException('Two demo staff accounts claim the same branch role; preserving and aborting.');
+            $user = $currentUser ?: $legacyUser;
+            $legacyBaseName = ['manager' => 'Alya Putri', 'cashier' => 'Bima Santoso', 'inventory' => 'Citra Lestari'][$role];
+            $legacyName = $legacyBaseName.' '.$branch->name;
             if ($user) {
-                if ($user->role !== $role || ! $user->is_active || DB::table('branch_user')->where('user_id', $user->id)->where('branch_id', '<>', $branch->id)->exists()) throw new RuntimeException('Legacy staff identity/assignment conflicts; preserving and aborting.');
+                if ($user->role !== $role || ! $user->is_active || ! in_array($user->name, [$legacyName, $baseName.' '.$branch->name], true)
+                    || DB::table('branch_user')->where('user_id', $user->id)->where('branch_id', '<>', $branch->id)->exists()) throw new RuntimeException('Legacy staff identity/assignment conflicts; preserving and aborting.');
                 $user->update(['name' => $baseName.' '.$branch->name, 'email' => $email]);
             } else {
-                $user = User::query()->firstOrCreate(['email' => $email], ['name' => $baseName.' '.$branch->name, 'password' => bcrypt('JooalDemo#2026'), 'role' => $role, 'is_active' => true]);
+                $user = User::query()->create(['name' => $baseName.' '.$branch->name, 'email' => $email, 'password' => bcrypt('JooalDemo#2026'), 'role' => $role, 'is_active' => true]);
             }
             if (! DB::table('branch_user')->where('user_id', $user->id)->where('branch_id', $branch->id)->exists()) DB::table('branch_user')->insert(['branch_id' => $branch->id, 'user_id' => $user->id, 'is_default' => 1, 'is_active' => 1, 'created_at' => now(), 'updated_at' => now()]);
             $result[$branch->code][$role] = $user;
@@ -398,11 +422,18 @@ class JooalDemoSeeder extends Seeder
 
     private function ensureAttendance($branches, array $staff): void
     {
-        foreach ($branches as $branch) for ($day = 1; $day <= 10; $day++) {
-            $cashier = $staff[$branch->code]['cashier'];
-            $checkIn = Carbon::parse('2026-10-'.str_pad((string) $day, 2, '0', STR_PAD_LEFT).' 08:'.str_pad((string) (($day * 7) % 50), 2, '0', STR_PAD_LEFT).':00', $branch->timezone);
-            if (DB::table('attendances')->where('user_id', $cashier->id)->where('branch_id', $branch->id)->where('check_in_at', $checkIn->toDateTimeString())->exists()) continue;
-            DB::table('attendances')->insert(['user_id' => $cashier->id, 'branch_id' => $branch->id, 'check_in_at' => $checkIn, 'check_out_at' => (clone $checkIn)->addHours(8), 'status' => 'checked_out', 'created_at' => now(), 'updated_at' => now()]);
+        foreach ($branches as $branch) {
+            foreach ([['cashier', range(1, 10)], ['manager', [1, 3, 5, 7, 9]], ['inventory', [2, 4, 6, 8, 10]]] as [$role, $days]) {
+                foreach ($days as $day) {
+                    $user = $staff[$branch->code][$role];
+                    $minute = $role === 'cashier' ? ($day * 7) % 50 : ($day * 11 + strlen($role) * 3 + (int) substr($branch->code, -1) * 5) % 60;
+                    $hour = $role === 'manager' ? 7 : ($role === 'inventory' ? 8 : 8);
+                    $checkIn = Carbon::parse('2026-10-'.str_pad((string) $day, 2, '0', STR_PAD_LEFT).' '.str_pad((string) $hour, 2, '0', STR_PAD_LEFT).':'.str_pad((string) $minute, 2, '0', STR_PAD_LEFT).':00', $branch->timezone);
+                    if (DB::table('attendances')->where('user_id', $user->id)->where('branch_id', $branch->id)->where('check_in_at', $checkIn->toDateTimeString())->exists()) continue;
+                    $durationMinutes = $role === 'cashier' ? 480 : 465 + (($day * 17 + (int) substr($branch->code, -1) * 13) % 76);
+                    DB::table('attendances')->insert(['user_id' => $user->id, 'branch_id' => $branch->id, 'check_in_at' => $checkIn, 'check_out_at' => (clone $checkIn)->addMinutes($durationMinutes), 'status' => 'checked_out', 'created_at' => now(), 'updated_at' => now()]);
+                }
+            }
         }
     }
 
@@ -461,6 +492,36 @@ class JooalDemoSeeder extends Seeder
         }
     }
 
+    /** Add a separately identified demo receipt to cover the added sample baskets. */
+    private function receiveDemoTopUp(Branch $branch, Supplier $supplier, User $owner, array $ingredients): void
+    {
+        $number = 'JOOAL-TOPUP-'.substr($branch->code, -3).'-202610';
+        $receipt = StockReceipt::query()->with('items.movement')->where('receipt_number', $number)->first();
+        $math = app(RecipeStockService::class);
+        if ($receipt) {
+            if ((int) $receipt->branch_id !== (int) $branch->id || (int) $receipt->supplier_id !== (int) $supplier->id
+                || $receipt->reason !== 'Persediaan demo tambahan untuk transaksi presentasi' || $receipt->items->count() !== count(self::INGREDIENTS)) throw new RuntimeException($number.' differs from its expected demo top-up receipt.');
+            foreach (self::INGREDIENTS as $key => [$name, $unit, $opening]) {
+                $ingredient = $ingredients[$key]; $qty = intdiv($opening, 2) * 1000;
+                $line = $receipt->items->firstWhere('ingredient_id', $ingredient->id); $movement = optional($line)->movement;
+                if (! $line || (string) $line->quantity !== $math->formatMilli($qty) || ! $movement
+                    || $movement->reference_key !== 'jooal:topup:'.$branch->code.':'.$ingredient->id
+                    || (string) $movement->quantity_delta !== $math->formatMilli($qty)
+                    || $math->toMilli((string) $movement->quantity_before) + $qty !== $math->toMilli((string) $movement->quantity_after)) throw new RuntimeException($number.' receipt line differs from its approved top-up.');
+            }
+            return;
+        }
+        $receipt = StockReceipt::query()->create(['receipt_number' => $number, 'branch_id' => $branch->id, 'supplier_id' => $supplier->id, 'received_by' => $owner->id, 'reason' => 'Persediaan demo tambahan untuk transaksi presentasi', 'received_at' => '2026-10-05 07:00:00']);
+        foreach (self::INGREDIENTS as $key => [$name, $unit, $opening]) {
+            $ingredient = $ingredients[$key]; $qty = intdiv($opening, 2) * 1000;
+            $stock = BranchStock::query()->where('branch_id', $branch->id)->where('ingredient_id', $ingredient->id)->lockForUpdate()->firstOrFail();
+            $before = $math->toMilli((string) $stock->quantity); $after = $before + $qty;
+            $stock->update(['quantity' => $math->formatMilli($after)]);
+            $movement = StockMovement::query()->create(['branch_id' => $branch->id, 'ingredient_id' => $ingredient->id, 'user_id' => $owner->id, 'reference_key' => 'jooal:topup:'.$branch->code.':'.$ingredient->id, 'type' => 'stock_in', 'quantity_delta' => $math->formatMilli($qty), 'quantity_before' => $math->formatMilli($before), 'quantity_after' => $math->formatMilli($after), 'reason' => 'Persediaan demo tambahan untuk transaksi presentasi']);
+            StockReceiptItem::query()->create(['stock_receipt_id' => $receipt->id, 'ingredient_id' => $ingredient->id, 'stock_movement_id' => $movement->id, 'quantity' => $math->formatMilli($qty)]);
+        }
+    }
+
     private function ensureTransactions($branches, array $products, array $customers, array $staff, array $addons): void
     {
         $globalSequence = 0;
@@ -471,6 +532,91 @@ class JooalDemoSeeder extends Seeder
             $quantity = 1 + (($day + $slot) % 2);
             $addon = (($day + $slot) % 4 === 0) ? $addons[($day + $slot) % count($addons)] : null;
             $this->seedSale($branch, $staff[$branch->code]['cashier'], $customers[$branch->code][($day + $slot) % 5], $product, $addon, $day, $slot, $quantity, $globalSequence);
+        }
+        foreach ($branches as $branch) for ($day = 1; $day <= 10; $day++) {
+            $list = array_values(array_filter($products[$branch->code], fn ($product) => ! collect($product['recipes'])->contains(fn ($recipe) => $recipe[0] === 'cinnamon')));
+            $firstIndex = ($day * 7 + (int) substr($branch->code, -1)) % count($list);
+            $secondIndex = ($firstIndex + 3 + ($day % 4)) % count($list);
+            if ($secondIndex === $firstIndex) $secondIndex = ($firstIndex + 1) % count($list);
+            $items = [
+                ['product' => $list[$firstIndex], 'quantity' => 1 + ($day % 2)],
+                ['product' => $list[$secondIndex], 'quantity' => 1],
+            ];
+            $minute = ($day * 13 + (int) substr($branch->code, -1) * 7) % 60;
+            $hour = 11 + ($day % 6);
+            $time = str_pad((string) $hour, 2, '0', STR_PAD_LEFT).':'.str_pad((string) $minute, 2, '0', STR_PAD_LEFT).':00';
+            $customerIndex = 5 + (($day + (int) substr($branch->code, -1)) % 5);
+            $sequence = 60 + $day + (array_search($branch, $branches->values()->all(), true) * 10);
+            $this->seedBasketSale($branch, $staff[$branch->code]['cashier'], $customers[$branch->code][$customerIndex], $items, $day, $time, $sequence);
+        }
+    }
+
+    /** Add a deterministic, two-line basket while leaving previously seeded sales unchanged. */
+    private function seedBasketSale(Branch $branch, User $cashier, Customer $customer, array $items, int $day, string $time, int $sequence): void
+    {
+        $number = 'JOOAL-'.substr($branch->code, -3).'-202610'.str_pad((string) $day, 2, '0', STR_PAD_LEFT).'-03';
+        $key = 'jooal:'.$number;
+        $math = app(RecipeStockService::class);
+        $cart = [];
+        $snapshots = [];
+        $grandTotal = 0.0;
+        foreach ($items as $line) {
+            $product = $line['product'];
+            $menu = $product['menu'];
+            $branchPrice = (float) DB::table('branch_menu')->where('branch_id', $branch->id)->where('menu_id', $menu->id)->value('price');
+            $unitPrice = $branchPrice + (float) optional($product['variant'])->price_adjustment;
+            $quantity = (int) $line['quantity'];
+            $lineTotal = $unitPrice * $quantity;
+            $grandTotal += $lineTotal;
+            $cart[] = ['menu_id' => $menu->id, 'menu_variant_id' => optional($product['variant'])->id, 'size_id' => null, 'topping_ids' => [], 'quantity' => $quantity];
+            $snapshots[] = ['menu' => $menu, 'variant' => $product['variant'], 'branch_price' => $branchPrice, 'unit_price' => $unitPrice, 'quantity' => $quantity, 'line_total' => $lineTotal];
+        }
+        $requirements = $math->requirementsForCart(collect($cart));
+        $soldAt = Carbon::parse('2026-10-'.str_pad((string) $day, 2, '0', STR_PAD_LEFT).' '.$time, $branch->timezone);
+        $fingerprintParts = array_map(fn ($snapshot, $cartItem) => ['menu' => $snapshot['menu']->slug, 'quantity' => $snapshot['quantity'], 'variant' => optional($snapshot['variant'])->slug, 'recipe' => $math->recipeFingerprintForItem($cartItem)], $snapshots, $cart);
+        $fingerprint = hash('sha256', json_encode(['branch' => $branch->code, 'items' => $fingerprintParts]));
+        $payment = $sequence % 2 === 0 ? 'qris' : 'cash';
+        $transaction = Transaction::query()->where('transaction_number', $number)->first();
+        if ($transaction) {
+            if ((int) $transaction->branch_id !== (int) $branch->id || $transaction->idempotency_key !== $key || $transaction->idempotency_fingerprint !== $fingerprint
+                || $transaction->status !== 'completed' || $transaction->payment_method !== $payment || (int) $transaction->customer_id !== (int) $customer->id
+                || $transaction->customer_name !== $customer->name || (float) $transaction->grand_total !== $grandTotal
+                || (float) $transaction->subtotal !== $grandTotal || (float) $transaction->amount_paid !== $grandTotal
+                || ! $transaction->sold_at || ! $transaction->sold_at->equalTo($soldAt)) throw new RuntimeException($number.' conflicts with its idempotent basket snapshot.');
+            $saved = TransactionItem::query()->where('transaction_id', $transaction->id)->orderBy('id')->get();
+            if ($saved->count() !== count($snapshots)) throw new RuntimeException($number.' item count differs from its basket snapshot.');
+            foreach ($snapshots as $index => $snapshot) {
+                $item = $saved[$index];
+                if ((int) $item->menu_id !== (int) $snapshot['menu']->id || (int) $item->quantity !== $snapshot['quantity']
+                    || (float) $item->branch_price !== $snapshot['branch_price'] || (float) $item->unit_price !== $snapshot['unit_price']
+                    || (float) $item->line_total !== $snapshot['line_total']) throw new RuntimeException($number.' line item differs from its basket snapshot.');
+            }
+            $this->assertSaleMovements($branch, $number, $requirements, $math);
+            return;
+        }
+        if (Transaction::query()->where('idempotency_key', $key)->exists()) throw new RuntimeException($key.' is already attached to another transaction.');
+        $transaction = Transaction::query()->create(['transaction_number' => $number, 'idempotency_key' => $key, 'idempotency_fingerprint' => $fingerprint, 'cashier_id' => $cashier->id, 'branch_id' => $branch->id, 'customer_id' => $customer->id, 'customer_name' => $customer->name, 'service_type' => 'take_away', 'fulfillment_type' => 'self_service', 'pager_number' => 'P'.str_pad((string) $sequence, 3, '0', STR_PAD_LEFT), 'subtotal' => $grandTotal, 'discount_total' => 0, 'tax_total' => 0, 'grand_total' => $grandTotal, 'amount_paid' => $grandTotal, 'change_amount' => 0, 'payment_method' => $payment, 'status' => 'completed', 'sold_at' => $soldAt]);
+        foreach ($snapshots as $snapshot) TransactionItem::query()->create(['transaction_id' => $transaction->id, 'menu_id' => $snapshot['menu']->id, 'menu_name' => $snapshot['menu']->name, 'matcha_type_id' => null, 'size_id' => null, 'topping_id' => null, 'quantity' => $snapshot['quantity'], 'unit_price' => $snapshot['unit_price'], 'menu_price' => $snapshot['menu']->price, 'branch_price' => $snapshot['branch_price'], 'line_total' => $snapshot['line_total'], 'item_options' => ['toppings' => [], 'variant' => optional($snapshot['variant'])->name]]);
+        foreach ($requirements as $requirement) {
+            $ingredient = $requirement['ingredient'];
+            $stock = BranchStock::query()->where('branch_id', $branch->id)->where('ingredient_id', $ingredient->id)->lockForUpdate()->firstOrFail();
+            $before = $math->toMilli((string) $stock->quantity); $needed = (int) $requirement['quantity_milli'];
+            if ($before < $needed) throw new RuntimeException('Insufficient stock for '.$ingredient->name.' at '.$branch->name.'.');
+            $after = $before - $needed; $stock->update(['quantity' => $math->formatMilli($after)]);
+            StockMovement::query()->create(['branch_id' => $branch->id, 'ingredient_id' => $ingredient->id, 'user_id' => $cashier->id, 'transaction_id' => $transaction->id, 'reference_key' => 'jooal:sale:'.$number.':'.$ingredient->id, 'type' => 'sale', 'quantity_delta' => '-'.$math->formatMilli($needed), 'quantity_before' => $math->formatMilli($before), 'quantity_after' => $math->formatMilli($after), 'reason' => 'Penjualan historis '.$number]);
+        }
+    }
+
+    private function assertSaleMovements(Branch $branch, string $number, $requirements, RecipeStockService $math): void
+    {
+        $movements = StockMovement::query()->where('transaction_id', Transaction::query()->where('transaction_number', $number)->value('id'))->get()->keyBy('ingredient_id');
+        if ($movements->count() !== $requirements->count()) throw new RuntimeException($number.' stock movement count differs from its basket recipe.');
+        foreach ($requirements as $requirement) {
+            $ingredient = $requirement['ingredient']; $movement = $movements->get($ingredient->id); $needed = (int) $requirement['quantity_milli'];
+            if (! $movement || (int) $movement->branch_id !== (int) $branch->id || $movement->type !== 'sale'
+                || $movement->reference_key !== 'jooal:sale:'.$number.':'.$ingredient->id
+                || (string) $movement->quantity_delta !== '-'.$math->formatMilli($needed)
+                || $math->toMilli((string) $movement->quantity_before) - $needed !== $math->toMilli((string) $movement->quantity_after)) throw new RuntimeException($number.' stock movement differs from its basket recipe.');
         }
     }
 
@@ -490,10 +636,12 @@ class JooalDemoSeeder extends Seeder
         $fingerprint = hash('sha256', json_encode(['branch' => $branch->code, 'menu' => $menu->slug, 'addon' => $addon ? $addon->slug : null, 'qty' => $quantity, 'recipe' => $math->recipeFingerprintForItem($cartItem)]));
         $transaction = Transaction::query()->where('transaction_number', $number)->first();
         if ($transaction) {
+            $emailLocalPart = explode('@', (string) $customer->email)[0];
+            $legacySnapshotName = ucwords(str_replace('.', ' ', preg_replace('/\.\d{3}$/', '', $emailLocalPart)));
             if ((int) $transaction->branch_id !== (int) $branch->id || $transaction->idempotency_key !== $key
                 || $transaction->idempotency_fingerprint !== $fingerprint || $transaction->status !== 'completed'
                 || $transaction->payment_method !== $payment || (int) $transaction->customer_id !== (int) $customer->id
-                || $transaction->customer_name !== $customer->name || (float) $transaction->subtotal !== $total
+                || ! in_array($transaction->customer_name, [$customer->name, $legacySnapshotName], true) || (float) $transaction->subtotal !== $total
                 || (float) $transaction->grand_total !== $total || (float) $transaction->amount_paid !== $total
                 || (float) $transaction->discount_total !== 0.0 || (float) $transaction->tax_total !== 0.0
                 || (float) $transaction->change_amount !== 0.0 || ! $transaction->sold_at || ! $transaction->sold_at->equalTo($soldAt)) {

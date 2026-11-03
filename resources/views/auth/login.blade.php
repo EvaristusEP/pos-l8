@@ -52,7 +52,6 @@
                 </label>
                 <button type="submit" class="pos-button auth-submit bg-emerald-700 text-white hover:bg-emerald-800">Masuk</button>
             </form>
-            <p class="auth-footnote">Akun disediakan oleh administrator JOOAL POS.</p>
         </section>
     </main>
     <script>

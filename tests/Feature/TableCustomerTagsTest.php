@@ -160,6 +160,7 @@ class TableCustomerTagsTest extends TestCase
         $cashier->branches()->attach($branch, ['is_default' => true, 'is_active' => true]);
         $category = Category::create(['name' => 'Pastry', 'slug' => 'pastry', 'sort_order' => 1, 'is_active' => true]);
         $menu = Menu::create(['category_id' => $category->id, 'name' => 'Croissant', 'slug' => 'croissant-table-test', 'price' => 8000, 'is_active' => true]);
+        $branch->menus()->attach($menu, ['price' => null, 'is_available' => true]);
         $variant = MenuVariant::create(['menu_id' => $menu->id, 'name' => 'Plain', 'slug' => 'croissant-plain-table-test', 'price_adjustment' => 0, 'is_active' => true]);
         return [$cashier, $branch, $menu, $variant];
     }

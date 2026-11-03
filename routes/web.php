@@ -53,12 +53,12 @@ Route::middleware('auth')->group(function () {
         Route::post('/settings/system/locale', [SystemSettingsController::class, 'updateLocale'])->name('settings.system.locale');
     });
 
+    Route::middleware('role:owner,admin,manager,cashier,inventory')->get('/attendance', [AttendanceController::class, 'index'])->name('attendance.index');
     Route::middleware('role:owner,manager,cashier,inventory')->prefix('attendance')->name('attendance.')->group(function () {
-        Route::get('/', [AttendanceController::class, 'index'])->name('index');
         Route::post('/check-in', [AttendanceController::class, 'checkIn'])->name('check-in');
         Route::post('/check-out', [AttendanceController::class, 'checkOut'])->name('check-out');
     });
-    Route::middleware('role:owner,manager')->get('/reports/attendance', [AttendanceController::class, 'report'])->name('reports.attendance');
+    Route::middleware('role:owner,admin,manager')->get('/reports/attendance', [AttendanceController::class, 'report'])->name('reports.attendance');
 
     Route::middleware('role:owner,manager')->prefix('transactions/{transaction}/refunds')->name('transactions.refunds.')->group(function () {
         Route::get('/', [RefundController::class, 'index'])->name('index');
@@ -75,6 +75,14 @@ Route::middleware('auth')->group(function () {
         Route::get('/dashboard/owner', [DashboardController::class, 'ownerDashboard'])->name('dashboard.owner');
     });
 
+    Route::get('/dashboard/manager', [RoleDashboardController::class, 'manager'])
+        ->middleware(['role:manager', 'active.branch'])
+        ->name('dashboard.manager');
+
+    Route::get('/dashboard/cashier', [RoleDashboardController::class, 'cashier'])
+        ->middleware(['role:cashier', 'active.branch'])
+        ->name('dashboard.cashier');
+
     Route::middleware('role:owner')->prefix('branches')->name('branches.')->group(function () {
         Route::get('/', [BranchController::class, 'index'])->name('index');
         Route::post('/', [BranchController::class, 'store'])->name('store');
@@ -83,7 +91,7 @@ Route::middleware('auth')->group(function () {
         Route::patch('/{branch}/toggle-status', [BranchController::class, 'toggleStatus'])->name('toggle-status');
     });
 
-    Route::middleware(['role:manager,cashier', 'active.branch'])->group(function () {
+    Route::middleware(['role:owner,manager,cashier', 'active.branch'])->group(function () {
         Route::get('/dashboard/pos', [DashboardController::class, 'index'])->name('dashboard.pos');
 
         Route::post('/dashboard/cart', [DashboardController::class, 'storeCartItem'])->name('dashboard.cart.store');

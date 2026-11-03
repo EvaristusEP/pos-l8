@@ -173,9 +173,47 @@ const bindCartForms = () => {
 				syncCartState(data);
 				form.reset();
 				syncButtonState();
+				form.closest('[data-product-detail]')?.close();
 			} catch (error) {
 				window.alert(error.message);
 			}
+		});
+	});
+};
+
+const bindProductDialogs = () => {
+	const formatCurrency = (amount) => new Intl.NumberFormat('id-ID').format(amount);
+	const updateTotal = (form) => {
+		const basePrice = Number(form.dataset.basePrice || 0);
+		const quantity = Math.max(1, Number(form.querySelector('[data-product-quantity]')?.value || 1));
+		const additions = Array.from(form.querySelectorAll('[data-priced-option]')).reduce((total, control) => {
+			if (control.tagName === 'SELECT') {
+				const option = control.selectedOptions[0];
+				return total + Number(option?.dataset.priceAdjustment || 0);
+			}
+			return total + (control.checked ? Number(control.dataset.priceAdjustment || 0) : 0);
+		}, 0);
+		const output = form.querySelector('[data-product-total]');
+		if (output) output.textContent = `Rp ${formatCurrency((basePrice + additions) * quantity)}`;
+	};
+
+	document.querySelectorAll('[data-product-detail]').forEach((dialog) => {
+		const form = dialog.querySelector('[data-menu-form]');
+		form?.querySelectorAll('[data-priced-option], [data-product-quantity]').forEach((control) => {
+			control.addEventListener('change', () => updateTotal(form));
+			control.addEventListener('input', () => updateTotal(form));
+		});
+		if (form) updateTotal(form);
+		dialog.querySelector('[data-product-close]')?.addEventListener('click', () => dialog.close());
+		dialog.addEventListener('click', (event) => {
+			if (event.target === dialog) dialog.close();
+		});
+	});
+
+	document.querySelectorAll('[data-product-open]').forEach((button) => {
+		button.addEventListener('click', () => {
+			const dialog = document.getElementById(button.dataset.productOpen);
+			if (dialog && !dialog.open) dialog.showModal();
 		});
 	});
 };
@@ -303,39 +341,38 @@ const bindCheckoutForm = () => {
 
 const bindMenuSearch = () => {
 	const searchInput = document.querySelector('[data-menu-search]');
-
-	if (!searchInput) {
-		return;
-	}
-
+	if (!searchInput) return;
 	const cards = Array.from(document.querySelectorAll('[data-menu-card]'));
 	const categories = Array.from(document.querySelectorAll('[data-menu-category]'));
+	const filters = Array.from(document.querySelectorAll('[data-category-filter]'));
 	const emptyState = document.querySelector('[data-menu-search-empty]');
 	const status = document.querySelector('[data-menu-search-status]');
-
+	let activeCategory = 'all';
 	const filterMenus = () => {
 		const keyword = searchInput.value.trim().toLocaleLowerCase('id-ID');
 		let visibleCount = 0;
-
 		cards.forEach((card) => {
-			const matches = !keyword || (card.dataset.menuSearchText || '').includes(keyword);
-			card.classList.toggle('hidden', !matches);
-			visibleCount += matches ? 1 : 0;
+			const matchesCategory = activeCategory === 'all' || card.dataset.menuCategoryId === activeCategory;
+			const matchesSearch = !keyword || (card.dataset.menuSearchText || '').includes(keyword);
+			const visible = matchesCategory && matchesSearch;
+			card.classList.toggle('hidden', !visible);
+			visibleCount += visible ? 1 : 0;
 		});
-
-		categories.forEach((category) => {
-			category.classList.toggle('hidden', !category.querySelector('[data-menu-card]:not(.hidden)'));
-		});
-
+		categories.forEach((category) => category.classList.toggle('hidden', !category.querySelector('[data-menu-card]:not(.hidden)')));
 		emptyState?.classList.toggle('hidden', visibleCount > 0);
-		if (status) {
-			status.textContent = keyword ? `${visibleCount} menu ditemukan untuk “${searchInput.value.trim()}”.` : 'Menampilkan semua menu.';
-		}
+		if (status) status.textContent = keyword ? `${visibleCount} menu ditemukan.` : (activeCategory === 'all' ? 'Menampilkan semua menu.' : 'Menampilkan kategori terpilih.');
 	};
-
+	filters.forEach((filter) => filter.addEventListener('click', () => {
+		activeCategory = filter.dataset.categoryFilter || 'all';
+		filters.forEach((item) => {
+			const selected = item === filter;
+			item.classList.toggle('is-active', selected);
+			item.setAttribute('aria-pressed', selected ? 'true' : 'false');
+		});
+		filterMenus();
+	}));
 	searchInput.addEventListener('input', filterMenus);
 };
-
 const bindOrderFulfillment = () => {
 	const panel = document.querySelector('[data-order-fulfillment]');
 
@@ -390,6 +427,7 @@ const bindOrderFulfillment = () => {
 
 document.addEventListener('DOMContentLoaded', () => {
 	bindCartForms();
+	bindProductDialogs();
 	bindCartActions();
 	bindCheckoutForm();
 	bindMenuSearch();

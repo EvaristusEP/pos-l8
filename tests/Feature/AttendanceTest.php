@@ -61,6 +61,85 @@ class AttendanceTest extends TestCase
             ->get('/attendance')->assertOk()->assertDontSee('09:00:00')->assertSee('08:00:00');
     }
 
+    public function test_owner_attendance_page_is_cross_branch_monitoring_with_filters_and_roster_summary(): void
+    {
+        $owner = User::factory()->create(['role' => User::ROLE_OWNER]);
+        $branchA = $this->branch('ATT-MON-1');
+        $branchB = $this->branch('ATT-MON-2');
+        $openEmployee = User::factory()->create(['name' => 'Open Employee', 'role' => User::ROLE_CASHIER]);
+        $closedEmployee = User::factory()->create(['name' => 'Closed Employee', 'role' => User::ROLE_INVENTORY]);
+        $absentEmployee = User::factory()->create(['name' => 'Absent Employee', 'role' => User::ROLE_MANAGER]);
+        $openEmployee->branches()->attach($branchA, ['is_default' => true, 'is_active' => true]);
+        $closedEmployee->branches()->attach($branchB, ['is_default' => true, 'is_active' => true]);
+        $absentEmployee->branches()->attach($branchB, ['is_default' => true, 'is_active' => true]);
+        Attendance::create(['user_id' => $openEmployee->id, 'branch_id' => $branchA->id, 'check_in_at' => '2026-10-23 08:00:00', 'status' => Attendance::STATUS_CHECKED_IN]);
+        Attendance::create(['user_id' => $closedEmployee->id, 'branch_id' => $branchB->id, 'check_in_at' => '2026-10-23 09:00:00', 'check_out_at' => '2026-10-23 17:00:00', 'status' => Attendance::STATUS_CHECKED_OUT]);
+
+        $this->actingAs($owner)->get('/attendance?date_from=2026-10-23&date_to=2026-10-23')
+            ->assertOk()
+            ->assertSee('Monitoring Absensi Karyawan')
+            ->assertSee('Open Employee')
+            ->assertSee('Closed Employee')
+            ->assertSee('Absent Employee')
+            ->assertSee('Direktori')
+            ->assertSee('Riwayat sesi absensi')
+            ->assertSee('data-employee-search', false)
+            ->assertSee('Manager')
+            ->assertSee('Kasir')
+            ->assertSee('Inventory')
+            ->assertSee('data-employee-card', false)
+            ->assertSee('Semua cabang')
+            ->assertViewHas('totalSessions', 2)
+            ->assertViewHas('openSessions', 1)
+            ->assertViewHas('checkedOutSessions', 1)
+            ->assertViewHas('employeesCheckedIn', 1)
+            ->assertViewHas('employeesCheckedOut', 1)
+            ->assertViewHas('employeesWithoutAttendance', 1);
+
+        $filtered = $this->get('/attendance?date_from=2026-10-23&date_to=2026-10-23&branch_id='.$branchB->id.'&status=checked_out')
+            ->assertOk()
+            ->assertSee('Closed Employee')
+            ->assertSee('Absent Employee')
+            ->assertDontSee('Open Employee')
+            ->assertSee('Branch ATT-MON-2');
+        $this->assertSame(2, substr_count($filtered->getContent(), '<article data-employee-card'));
+        $this->assertStringContainsString('data-employee-search-text=', $filtered->getContent());
+        $this->assertSame(2, Attendance::query()->count(), 'Rendering the directory must not create or duplicate attendance sessions.');
+
+        $styles = file_get_contents(resource_path('css/app.css'));
+        $this->assertStringContainsString('.attendance-employee-grid { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr);', $styles);
+        $this->assertStringContainsString('@media (min-width: 768px) { .attendance-employee-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }', $styles);
+
+        $this->get('/attendance?date_from=2026-10-23&date_to=2026-10-23&branch_id='.$branchB->id.'&status=checked_out')
+            ->assertOk()
+            ->assertSee('Closed Employee')
+            ->assertDontSee('Open Employee')
+            ->assertViewHas('totalSessions', 1)
+            ->assertViewHas('openSessions', 0)
+            ->assertViewHas('checkedOutSessions', 1)
+            ->assertViewHas('employeesCheckedIn', 0)
+            ->assertViewHas('employeesCheckedOut', 1)
+            ->assertViewHas('employeesWithoutAttendance', 1);
+
+        $this->get('/attendance?date_from=2026-10-23&date_to=2026-10-23&status=invalid')
+            ->assertSessionHasErrors('status');
+    }
+
+    public function test_legacy_admin_role_can_view_read_only_cross_branch_attendance_monitoring(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $employee = User::factory()->create(['name' => 'Branch Employee', 'role' => User::ROLE_CASHIER]);
+        $branch = $this->branch('ATT-ADMIN');
+        Attendance::create(['user_id' => $employee->id, 'branch_id' => $branch->id, 'check_in_at' => '2026-10-23 08:00:00', 'status' => Attendance::STATUS_CHECKED_IN]);
+
+        $this->actingAs($admin)->get('/attendance?date_from=2026-10-23&date_to=2026-10-23')
+            ->assertOk()
+            ->assertSee('Branch Employee')
+            ->assertSee('Semua cabang');
+
+        $this->post('/attendance/check-in')->assertForbidden();
+    }
+
     public function test_manager_check_in_uses_assigned_active_branch_and_cannot_widen_report_scope(): void
     {
         $manager = User::factory()->create(['role' => User::ROLE_MANAGER]);
@@ -95,6 +174,53 @@ class AttendanceTest extends TestCase
         $this->get('/reports/attendance?date_from=2026-10-23&date_to=2026-10-23&branch_id='.$second->id)
             ->assertOk()->assertViewHas('totalSessions', 1)->assertViewHas('openSessions', 1);
         $this->get('/reports/attendance?date_from=2026-10-24&date_to=2026-10-23')->assertSessionHasErrors('date_to');
+    }
+
+    public function test_attendance_date_filter_values_are_preserved_and_include_full_end_date(): void
+    {
+        $owner = User::factory()->create(['role' => User::ROLE_OWNER]);
+        $branch = $this->branch('ATT-DATE');
+        $employee = User::factory()->create(['name' => 'Date Filter Employee', 'role' => User::ROLE_CASHIER]);
+        $employee->branches()->attach($branch, ['is_default' => true, 'is_active' => true]);
+
+        Attendance::create(['user_id' => $employee->id, 'branch_id' => $branch->id, 'check_in_at' => '2020-10-28 00:00:00', 'status' => Attendance::STATUS_CHECKED_IN]);
+        Attendance::create(['user_id' => $employee->id, 'branch_id' => $branch->id, 'check_in_at' => '2020-10-29 23:59:59', 'check_out_at' => '2020-10-30 00:10:00', 'status' => Attendance::STATUS_CHECKED_OUT]);
+        Attendance::create(['user_id' => $employee->id, 'branch_id' => $branch->id, 'check_in_at' => '2020-10-30 00:00:00', 'status' => Attendance::STATUS_CHECKED_IN]);
+
+        $response = $this->actingAs($owner)->get('/attendance?date_from=2020-10-28&date_to=2020-10-29&branch_id='.$branch->id.'&status=checked_out')
+            ->assertOk()
+            ->assertViewHas('from', '2020-10-28')
+            ->assertViewHas('to', '2020-10-29')
+            ->assertViewHas('totalSessions', 2)
+            ->assertViewHas('checkedOutSessions', 1)
+            ->assertSee('Date Filter Employee');
+
+        $html = $response->getContent();
+        $this->assertStringContainsString('name="date_from" value="2020-10-28"', $html);
+        $this->assertStringContainsString('name="date_to" value="2020-10-29"', $html);
+        $this->assertStringContainsString('name="status"', $html);
+        $this->assertStringContainsString('value="'.$branch->id.'" selected', $html);
+        $this->assertStringContainsString('value="checked_out" selected', $html);
+
+        $this->get('/reports/attendance?date_to=2020-10-29')
+            ->assertSessionHasErrors('date_to');
+    }
+
+    public function test_attendance_filter_defaults_to_today_and_uses_responsive_single_row_layout_on_desktop(): void
+    {
+        $owner = User::factory()->create(['role' => User::ROLE_OWNER]);
+
+        $response = $this->actingAs($owner)->get('/attendance')->assertOk()->assertViewHas('from', now()->toDateString());
+        $response->assertSee('class="attendance-report-filter"', false)
+            ->assertSee('class="pos-button attendance-report-submit', false)
+            ->assertSee('name="date_from" value="'.now()->toDateString().'"', false)
+            ->assertSee('name="date_to" value="'.now()->toDateString().'"', false);
+
+        $styles = file_get_contents(resource_path('css/app.css'));
+        $this->assertStringContainsString('.attendance-report-filter { display: grid;', $styles);
+        $this->assertStringContainsString('grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, .9fr) auto;', $styles);
+        $this->assertStringContainsString('.attendance-report-submit { justify-self: end;', $styles);
+        $this->assertStringContainsString('$from = $validated[\'date_from\'] ?? now()->toDateString();', file_get_contents(app_path('Http/Controllers/AttendanceController.php')));
     }
 
     public function test_inventory_role_can_manage_own_attendance_but_not_attendance_report(): void

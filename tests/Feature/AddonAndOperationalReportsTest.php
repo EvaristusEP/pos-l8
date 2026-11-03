@@ -58,6 +58,7 @@ class AddonAndOperationalReportsTest extends TestCase
         $cashier->branches()->attach($branch, ['is_default' => true, 'is_active' => true]);
         $category = Category::create(['name' => 'Coffee', 'slug' => 'addon-coffee', 'sort_order' => 1, 'is_active' => true]);
         $menu = Menu::create(['category_id' => $category->id, 'name' => 'Latte', 'slug' => 'addon-latte', 'price' => 20000, 'is_active' => true]);
+        $branch->menus()->attach($menu, ['price' => null, 'is_available' => true]);
         $ingredient = Ingredient::create(['name' => 'Espresso', 'slug' => 'addon-espresso', 'unit' => 'gram', 'minimum_stock' => 0, 'is_active' => true]);
         RecipeItem::create(['menu_id' => $menu->id, 'ingredient_id' => $ingredient->id, 'quantity' => 10, 'unit' => 'gram', 'is_active' => true]);
         $recipe = RecipeItem::create(['topping_id' => $addon->id, 'ingredient_id' => $ingredient->id, 'quantity' => 18, 'unit' => 'gram', 'is_active' => true]);

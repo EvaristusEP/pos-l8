@@ -27,13 +27,61 @@ class RoleDashboardTest extends TestCase
             ->assertDontSee('Checkout');
     }
 
-    public function test_owner_and_inventory_are_denied_checkout(): void
+    public function test_owner_can_checkout_only_after_selecting_a_branch_and_inventory_is_denied(): void
     {
         $owner = User::factory()->create(['role' => User::ROLE_OWNER]);
         $inventory = User::factory()->create(['role' => User::ROLE_INVENTORY]);
 
-        $this->actingAs($owner)->get('/checkout')->assertForbidden();
+        $branch = $this->createBranch('OWN-01');
+        $this->actingAs($owner)->get('/dashboard')->assertRedirect(route('dashboard.owner'));
+        $this->actingAs($owner)->get('/checkout')->assertOk()->assertSessionHas('active_branch_id', $branch->id);
         $this->actingAs($inventory)->get('/checkout')->assertForbidden();
+    }
+
+    public function test_manager_dashboard_shows_only_the_assigned_active_branch(): void
+    {
+        $manager = User::factory()->create(['role' => User::ROLE_MANAGER]);
+        $assigned = $this->createBranch('MGR-01');
+        $other = $this->createBranch('MGR-02');
+        $manager->branches()->attach($assigned, ['is_default' => true, 'is_active' => true]);
+        $localTransaction = $this->createTransaction('TX-MGR-LOCAL', $assigned, $manager);
+        $localTransaction->update(['grand_total' => 12345]);
+        $otherTransaction = $this->createTransaction('TX-MGR-OTHER', $other, $manager);
+        $otherTransaction->update(['grand_total' => 98765]);
+
+        $this->actingAs($manager)->withSession(['active_branch_id' => $assigned->id])
+            ->get('/dashboard')->assertRedirect(route('dashboard.manager'));
+        $this->actingAs($manager)->withSession(['active_branch_id' => $assigned->id])
+            ->get('/dashboard/manager')->assertOk()
+            ->assertSee($assigned->display_name)
+            ->assertSee('Rp 12.345')
+            ->assertDontSee('Rp 98.765')
+            ->assertSee(route('dashboard.pos'), false)
+            ->assertSee(route('orders.index'), false)
+            ->assertSee(route('history'), false);
+
+        $this->actingAs($manager)->withSession(['active_branch_id' => $assigned->id])
+            ->get('/dashboard/cashier')->assertForbidden();
+    }
+
+    public function test_cashier_dashboard_is_separate_from_pos_and_keeps_assigned_branch_access(): void
+    {
+        $cashier = User::factory()->create(['role' => User::ROLE_CASHIER]);
+        $branch = $this->createBranch('CSH-01');
+        $cashier->branches()->attach($branch, ['is_default' => true, 'is_active' => true]);
+
+        $this->actingAs($cashier)->withSession(['active_branch_id' => $branch->id])
+            ->get('/dashboard')->assertRedirect(route('dashboard.cashier'));
+        $this->actingAs($cashier)->withSession(['active_branch_id' => $branch->id])
+            ->get('/dashboard/cashier')->assertOk()
+            ->assertSee($branch->display_name)
+            ->assertSee(route('dashboard.pos'), false)
+            ->assertSee(route('orders.index'), false)
+            ->assertSee(route('history'), false);
+        $this->actingAs($cashier)->withSession(['active_branch_id' => $branch->id])
+            ->get('/dashboard/manager')->assertForbidden();
+        $this->actingAs($cashier)->withSession(['active_branch_id' => $branch->id])
+            ->get('/dashboard/pos')->assertOk();
     }
 
     public function test_cashier_can_open_checkout_on_assigned_branch(): void

@@ -35,26 +35,73 @@ class MasterDataUiTest extends TestCase
             $response = $this->actingAs($owner)->get($url)->assertOk();
             $response->assertSee('<dialog id="'.$dialogId.'"', false)
                 ->assertSee('data-filter-search="'.$listId.'"', false);
+
+            if ($url !== '/master-menu') {
+                $response->assertSee('style="box-sizing: border-box; width: min(40rem, calc(100vw - 2rem)); max-width: calc(100vw - 2rem); margin: auto;"', false);
+            }
+
+            if (in_array($url, ['/tables', '/customers'], true)) {
+                $response->assertSee('<dialog id="'.$dialogId.'" class="crud-dialog"', false);
+            }
+            if ($url === '/master-menu') {
+                $response->assertSee('<dialog id="'.$dialogId.'" class="crud-dialog crud-dialog-wide"', false)
+                    ->assertSee('style="box-sizing: border-box; width: min(56rem, calc(100vw - 2rem)); max-width: calc(100vw - 2rem); margin: auto;"', false);
+                $response->assertSee('master-menu-filter-bar', false)
+                    ->assertSee('name="category_id"', false)
+                    ->assertSee('name="price"', false)
+                    ->assertDontSee('Tags produk')
+                    ->assertSee('Harga dan ketersediaan', false)
+                    ->assertSee('Harga standar', false)
+                    ->assertSee('Lengkapi resep serta resep varian', false)
+                    ->assertDontSee('name="slug"', false)
+                    ->assertSee('master-menu-form-actions', false)
+                    ->assertDontSee('class="crud-dialog-content min-w-0 p-4 sm:p-5" style=', false);
+                $styles = file_get_contents(resource_path('css/app.css'));
+                $this->assertStringContainsString('dialog.crud-dialog-wide[open] { display: flex; flex-direction: column; overflow: hidden; }', $styles);
+                $this->assertStringContainsString('dialog.crud-dialog-wide .crud-dialog-content { min-height: 0; max-height: none; flex: 1 1 auto; overflow-x: hidden; overflow-y: auto;', $styles);
+                $this->assertStringContainsString('.master-menu-form-actions { position: sticky;', $styles);
+                $this->assertStringContainsString('.master-menu-product-info { display: grid;', $styles);
+                $this->assertStringContainsString('@media (min-width: 640px) { .master-menu-product-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }', $styles);
+                $this->assertStringContainsString('.master-menu-product-fields { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr);', $styles);
+                $this->assertStringContainsString('.master-menu-branch-row { display: grid;', $styles);
+                $form = file_get_contents(resource_path('views/master-menu/_form.blade.php'));
+                $this->assertStringContainsString('<div class="master-menu-branch-row">', $form);
+                $this->assertStringContainsString('class="master-menu-branch-availability"', $form);
+            }
         }
     }
 
     public function test_master_menu_filters_use_category_and_status_data_and_show_active_branch_price(): void
     {
         $owner = User::factory()->create(['role' => User::ROLE_OWNER]);
-        $branch = Branch::create(['code' => 'UI-01', 'name' => 'UI Branch', 'timezone' => 'Asia/Jakarta', 'is_active' => true]);
+        $branch = Branch::create(['code' => 'JOOAL-003', 'name' => 'JOOAL Coffee', 'timezone' => 'Asia/Jakarta', 'is_active' => true]);
         $category = Category::create(['name' => 'Coffee', 'slug' => 'ui-coffee', 'sort_order' => 1, 'is_active' => true]);
         $menu = Menu::create(['category_id' => $category->id, 'name' => 'UI Latte', 'slug' => 'ui-latte', 'price' => 25000, 'is_active' => true]);
-        $branch->menus()->attach($menu, ['price' => 19500, 'is_available' => false]);
+        $branch->menus()->attach($menu, ['price' => 19500, 'is_available' => false, 'catalog_category' => 'kopi']);
 
-        $this->actingAs($owner)->withSession(['active_branch_id' => $branch->id])
+        $response = $this->actingAs($owner)->withSession(['active_branch_id' => $branch->id])
             ->get('/master-menu')->assertOk()
             ->assertSee('data-filter-select="menu-list" data-filter-key="category"', false)
             ->assertSee('data-filter-key="status"', false)
-            ->assertSee('data-category="'.$category->id.'" data-status="active"', false)
-            ->assertSee('Coffee')
-            ->assertSee('UI Branch')
+            ->assertSee('data-category="kopi" data-status="active"', false)
+            ->assertSee('Kopi')
+            ->assertSee('JOOAL Coffee')
             ->assertSee('Harga cabang: Rp 19.500')
             ->assertSee('Tidak tersedia di cabang');
+
+        $html = $response->getContent();
+        $this->assertSame(2, substr_count($html, 'class="master-menu-product-info"'), 'Create and edit dialogs both render the shared product form.');
+        $this->assertSame(2, substr_count($html, 'class="master-menu-form-actions"'), 'Both dialogs have a single shared footer.');
+        preg_match('/<label class="master-menu-category-field[^\"]*">([\s\S]*?)<\/label>/', $html, $categoryField);
+        $this->assertNotEmpty($categoryField);
+        $this->assertStringNotContainsString('JOOAL Coffee', $categoryField[1], 'The active branch name is not repeated under product category.');
+        $headingAt = strpos($html, 'master-menu-product-heading');
+        $categoryAt = strpos($html, 'master-menu-category-field');
+        $fieldsAt = strpos($html, 'master-menu-product-fields');
+        $descriptionAt = strpos($html, 'master-menu-description-field');
+        $this->assertTrue($headingAt < $categoryAt && $categoryAt < $fieldsAt && $fieldsAt < $descriptionAt);
+        $this->assertStringContainsString('Buat Produk', $html);
+        $this->assertStringContainsString('Simpan perubahan', $html);
     }
 
     public function test_master_menu_shows_branch_recipe_capacity_or_incomplete_status(): void

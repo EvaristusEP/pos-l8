@@ -49,6 +49,62 @@ class RecipeAndStockCheckoutTest extends TestCase
         $this->assertSame($branch->id, StockMovement::latest('id')->first()->branch_id);
     }
 
+    public function test_failed_cash_payment_does_not_create_transaction_or_change_stock(): void
+    {
+        [$cashier, $branch, $menu] = $this->context();
+        $ingredient = $this->recipeAndStock($branch, $menu, 20);
+
+        $this->actingAs($cashier)->withSession($this->cartSession($branch, $menu, 1, 'failed-payment-key'))
+            ->from('/checkout')->post('/checkout', array_merge($this->payment(), ['cash_amount' => 1]))
+            ->assertRedirect('/checkout')->assertSessionHasErrors('cash_amount');
+
+        $this->assertSame(0, Transaction::count());
+        $this->assertSame('20.000', (string) BranchStock::where(['branch_id' => $branch->id, 'ingredient_id' => $ingredient->id])->value('quantity'));
+        $this->assertSame(0, StockMovement::count());
+    }
+
+    public function test_checkout_uses_the_selected_pastry_variant_recipe_for_each_portion(): void
+    {
+        [$cashier, $branch] = $this->context();
+        $category = Category::create(['name' => 'Pastry', 'slug' => 'pastry', 'sort_order' => 3, 'is_active' => true]);
+        $menu = Menu::create(['category_id' => $category->id, 'name' => 'Croissant', 'slug' => 'croissant-variant-recipe', 'price' => 25000, 'is_active' => true]);
+        $branch->menus()->attach($menu, ['price' => null, 'is_available' => true]);
+        $variant = \App\Models\MenuVariant::create(['menu_id' => $menu->id, 'name' => 'Large', 'slug' => 'croissant-large-recipe', 'price_adjustment' => 5000, 'is_active' => true]);
+        $ingredient = Ingredient::create(['name' => 'Adonan', 'slug' => 'adonan-variant-recipe', 'unit' => 'gram', 'minimum_stock' => 0, 'is_active' => true]);
+        RecipeItem::create(['menu_id' => $menu->id, 'menu_variant_id' => $variant->id, 'ingredient_id' => $ingredient->id, 'quantity' => 7, 'unit' => 'gram', 'is_active' => true]);
+        BranchStock::create(['branch_id' => $branch->id, 'ingredient_id' => $ingredient->id, 'quantity' => 30]);
+        $item = ['menu_id' => $menu->id, 'topping_ids' => [], 'menu_variant_id' => $variant->id, 'quantity' => 2, 'unit_price' => 1, 'line_total' => 2, 'category_slug' => 'pastry'];
+        $item['recipe_fingerprint'] = app(RecipeStockService::class)->recipeFingerprintForItem($item);
+
+        $this->actingAs($cashier)->withSession([
+            'active_branch_id' => $branch->id,
+            'checkout_idempotency_key' => 'pastry-variant-recipe-key',
+            'pos_cart' => [$item],
+        ])->post('/checkout', $this->payment())->assertRedirect()->assertSessionHasNoErrors();
+
+        $transaction = Transaction::firstOrFail();
+        $this->assertSame('16.000', (string) BranchStock::where(['branch_id' => $branch->id, 'ingredient_id' => $ingredient->id])->value('quantity'));
+        $this->assertSame('-14.000', (string) StockMovement::where('transaction_id', $transaction->id)->value('quantity_delta'));
+    }
+
+    public function test_unassigned_branch_id_cannot_redirect_cashier_stock_deduction(): void
+    {
+        [$cashier, $branch, $menu] = $this->context();
+        $ingredient = $this->recipeAndStock($branch, $menu, 20);
+        $unassignedBranch = Branch::create(['code' => 'OTHER-01', 'name' => 'Unassigned branch', 'timezone' => 'Asia/Jakarta', 'is_active' => true]);
+        BranchStock::create(['branch_id' => $unassignedBranch->id, 'ingredient_id' => $ingredient->id, 'quantity' => 100]);
+        $session = $this->cartSession($branch, $menu, 1, 'unassigned-branch-key');
+        $session['active_branch_id'] = $unassignedBranch->id;
+
+        $this->actingAs($cashier)->withSession($session)
+            ->post('/checkout', array_merge($this->payment(), ['branch_id' => $unassignedBranch->id]))
+            ->assertRedirect()->assertSessionHasNoErrors()->assertSessionHas('active_branch_id', $branch->id);
+
+        $transaction = Transaction::firstOrFail();
+        $this->assertSame($branch->id, $transaction->branch_id);
+        $this->assertSame('15.000', (string) BranchStock::where(['branch_id' => $branch->id, 'ingredient_id' => $ingredient->id])->value('quantity'));
+        $this->assertSame('100.000', (string) BranchStock::where(['branch_id' => $unassignedBranch->id, 'ingredient_id' => $ingredient->id])->value('quantity'));
+    }
     public function test_insufficient_stock_rolls_back_transaction_and_movement(): void
     {
         [$cashier, $branch, $menu] = $this->context();
@@ -170,7 +226,7 @@ class RecipeAndStockCheckoutTest extends TestCase
         $this->assertSame('0.250', (string) BranchStock::where(['branch_id' => $branch->id, 'ingredient_id' => $ingredient->id])->value('quantity'));
         $this->assertSame('-0.250', (string) StockMovement::where('type', 'sale')->value('quantity_delta'));
         $this->assertSame('5.000', (string) BranchStock::where(['branch_id' => $otherBranch->id, 'ingredient_id' => $ingredient->id])->value('quantity'));
-        $this->withSession(['active_branch_id' => $branch->id])->get('/dashboard/pos')->assertOk()->assertSee('Stok terbatas — 1 porsi dapat dibuat');
+        $this->withSession(['active_branch_id' => $branch->id])->get('/dashboard/pos')->assertOk()->assertSee('Terbatas');
     }
 
     public function test_menu_without_recipe_is_rejected_and_not_sold(): void
@@ -205,7 +261,7 @@ class RecipeAndStockCheckoutTest extends TestCase
         $this->assertFalse($service->menuRecipeReady($menu));
         $this->actingAs($cashier)->withSession(['active_branch_id' => $branch->id])
             ->get('/dashboard/pos')->assertOk()->assertSee($menu->name)
-            ->assertSee('Resep belum lengkap — ketersediaan belum dapat dihitung')
+            ->assertSee('Resep belum lengkap')
             ->assertSee('disabled', false);
         $this->actingAs($cashier)->withSession(['active_branch_id' => $branch->id])
             ->post('/dashboard/cart', ['menu_id' => $menu->id, 'quantity' => 1])->assertSessionHasErrors('menu_id');

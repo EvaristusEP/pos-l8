@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>Laporan Penjualan - Matcha House POS</title>
+    <title>Laporan Penjualan - JOOAL POS</title>
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=manrope:400,500,600,700,800&display=swap" rel="stylesheet">
     @vite(['resources/css/app.css', 'resources/js/app.js'])
@@ -16,20 +16,20 @@
 <header class="pos-page-header rounded-[2rem] border border-white/80 bg-white/90 p-5 shadow-[0_20px_80px_rgba(16,24,40,0.08)] backdrop-blur-xl">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-            <p class="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Matcha House POS</p>
+            <p class="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">JOOAL POS</p>
             <h1 class="mt-2 text-3xl font-extrabold tracking-tight text-emerald-950">Laporan Penjualan</h1>
             <p class="mt-2 text-sm text-slate-600">Ringkasan transaksi harian berdasarkan pembayaran yang telah selesai.</p>
         </div>
         <div class="lg:ml-auto">
         </div>
     </div>
-    <form method="GET" action="{{ route('reports.sales') }}" class="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:items-end">
-        <label class="block text-sm font-bold text-slate-700">Tanggal laporan
-            <input type="date" name="date" value="{{ $selectedDate }}" class="mt-2 block w-full rounded-xl border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 focus:border-emerald-500 focus:ring-emerald-500 sm:w-56">
+    <form method="GET" action="{{ route('reports.sales') }}" class="pos-filter mt-5">
+        <label class="text-sm font-semibold">Tanggal laporan
+            <input type="date" name="date" value="{{ $selectedDate }}" class="pos-input">
         </label>
         @if ($isOwner)
-            <label class="block text-sm font-bold text-slate-700">Cabang
-                <select name="branch_id" class="mt-2 block w-full rounded-xl border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 focus:border-emerald-500 focus:ring-emerald-500 sm:w-64">
+            <label class="text-sm font-semibold">Cabang
+                <select name="branch_id" class="pos-input">
                     <option value="" @if (empty($selectedBranchId)) selected @endif>Semua Cabang</option>
                     @foreach ($branches as $branch)
                         <option value="{{ $branch->id }}" @if ((string) $selectedBranchId === (string) $branch->id) selected @endif>{{ $branch->display_name }}</option>

@@ -20,6 +20,7 @@ use App\Models\StockMovement;
 use App\Models\User;
 use App\Services\RefundService;
 use App\Services\RecipeStockService;
+use App\Services\BranchMenuCategoryCatalog;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -716,7 +717,6 @@ class DashboardController extends Controller
         $activeBranch = request()->attributes->get('active_branch');
         $categories = Category::query()
             ->where('is_active', true)
-            ->whereIn('slug', ['matcha', 'non-matcha', 'pastry'])
             ->with([
                 'menus' => function ($query) {
                     $query->where('is_active', true)->with(['variants' => fn ($variantQuery) => $variantQuery->where('is_active', true)->orderBy('name'), 'branches'])->orderBy('name');
@@ -733,6 +733,7 @@ class DashboardController extends Controller
                     }
 
                     $menu->setAttribute('display_price', $this->menuPriceForBranch($menu, $activeBranch));
+                    $menu->setAttribute('source_category_slug', $menu->category?->slug);
                     $recipeStock = app(RecipeStockService::class);
                     $availability = $recipeStock->availability($menu, $activeBranch);
                     $menu->setAttribute('recipe_ready', $availability['status'] !== 'recipe_incomplete');
@@ -743,6 +744,18 @@ class DashboardController extends Controller
                     return true;
                 })->values());
             });
+            $resolver = app(BranchMenuCategoryCatalog::class);
+            $groups = [];
+            foreach ($categories as $sourceCategory) {
+                foreach ($sourceCategory->menus as $menu) {
+                    $resolved = $resolver->resolve($menu, $activeBranch);
+                    $groups[$resolved['slug']] ??= (object) ['id' => $resolved['slug'], 'slug' => $resolved['slug'], 'name' => $resolved['name'], 'menus' => collect()];
+                    $groups[$resolved['slug']]->menus->push($menu);
+                }
+            }
+            $categories = collect($groups)->values();
+        } else {
+            $categories = $categories->filter(fn (Category $category) => $category->menus->isNotEmpty())->values();
         }
 
         $toppings = Topping::query()
@@ -776,7 +789,7 @@ class DashboardController extends Controller
             'matchaOrigins' => $matchaOrigins,
             'cart' => $cart->values(),
             'cartState' => $this->cartState($cart),
-            'activeMenuCount' => $categories->sum(fn (Category $category) => $category->menus->count()),
+            'activeMenuCount' => $categories->sum(fn ($category) => $category->menus->count()),
             'cartSubtotal' => $cartSubtotal,
             'cartItemCount' => $cartItemCount,
             'cashAmount' => old('cash_amount', session('cash_amount')),
@@ -872,7 +885,7 @@ class DashboardController extends Controller
             ? $menu->branches->firstWhere('id', $branch->getKey())
             : $menu->branches()->whereKey($branch->getKey())->first();
 
-        return ! $setting || (bool) $setting->pivot->is_available;
+        return $setting && (bool) $setting->pivot->is_available;
     }
 
     private function menuPriceForBranch(Menu $menu, Branch $branch): float

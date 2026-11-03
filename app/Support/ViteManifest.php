@@ -30,7 +30,7 @@ class ViteManifest
                 throw new RuntimeException("The Vite entry [{$entry}] is missing from the manifest.");
             }
 
-            $url = htmlspecialchars(asset('build/'.$file), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            $url = $this->assetUrl($file);
             $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
 
             if ($extension === 'css') {
@@ -40,11 +40,19 @@ class ViteManifest
             }
 
             foreach (($asset['css'] ?? []) as $cssFile) {
-                $cssUrl = htmlspecialchars(asset('build/'.$cssFile), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                $cssUrl = $this->assetUrl($cssFile);
                 $tags[] = '<link rel="stylesheet" href="'.$cssUrl.'">';
             }
         }
 
         return implode(PHP_EOL, array_unique($tags));
+    }
+
+    private function assetUrl(string $file): string
+    {
+        $path = public_path('build/'.$file);
+        $version = is_file($path) ? '?v='.filemtime($path) : '';
+
+        return htmlspecialchars(asset('build/'.$file).$version, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     }
 }

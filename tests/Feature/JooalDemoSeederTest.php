@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Branch;
 use App\Models\BranchStock;
+use App\Models\Attendance;
 use App\Models\Category;
 use App\Models\Coupon;
 use App\Models\Customer;
@@ -54,13 +55,14 @@ class JooalDemoSeederTest extends TestCase
         $this->assertSame(['JOOAL Bakery', 'JOOAL Gelato', 'JOOAL Coffee'], Branch::query()->orderBy('code')->pluck('name')->all());
         $this->assertSame([$branches[0]->id, $branches[1]->id, $branches[2]->id], Branch::query()->orderBy('code')->pluck('id')->all());
         $this->assertSame('POS-BASE-0001', $unmarked->fresh()->transaction_number);
-        $this->assertSame(60, $firstCounts['transactions']);
+        $this->assertSame(90, $firstCounts['transactions']);
         $this->assertSame(48, $firstCounts['menus']);
         $this->assertSame(10, $firstCounts['suppliers']);
-        $this->assertSame(15, $firstCounts['customers']);
+        $this->assertSame(30, $firstCounts['customers']);
+        $this->assertSame(30, Customer::query()->where('email', 'like', '%@customer.example.test')->distinct()->count('name'));
         $this->assertSame(10, $firstCounts['coupons']);
         $this->assertSame(3 * count(Ingredient::all()), $firstCounts['stocks']);
-        $this->assertSame(3, $firstCounts['receipts']);
+        $this->assertSame(6, $firstCounts['receipts']);
         $this->assertSame($firstCounts, [
             'transactions' => Transaction::where('transaction_number', 'like', 'JOOAL-%')->count(),
             'movements' => StockMovement::count(), 'menus' => Menu::where('slug', 'like', 'jooal-%')->count(),
@@ -71,8 +73,13 @@ class JooalDemoSeederTest extends TestCase
         $this->assertSame(18, DB::table('branch_menu')->where('branch_id', $branches[0]->id)->where('is_available', true)->count());
         $this->assertSame(18, DB::table('branch_menu')->where('branch_id', $branches[1]->id)->where('is_available', true)->count());
         $this->assertSame(18, DB::table('branch_menu')->where('branch_id', $branches[2]->id)->where('is_available', true)->count());
-        $this->assertSame(20, Transaction::query()->where('branch_id', $branches[0]->id)->where('transaction_number', 'like', 'JOOAL-%')->count());
-        $this->assertSame(20, Transaction::query()->where('transaction_number', 'like', 'JOOAL-%')->where('payment_method', 'qris')->count());
+        foreach ($branches as $branch) $this->assertSame(30, Transaction::query()->where('branch_id', $branch->id)->where('transaction_number', 'like', 'JOOAL-%')->count());
+        $this->assertSame(35, Transaction::query()->where('transaction_number', 'like', 'JOOAL-%')->where('payment_method', 'qris')->count());
+        $this->assertSame(120, TransactionItem::query()->whereHas('transaction', fn ($query) => $query->where('transaction_number', 'like', 'JOOAL-%'))->count());
+        $this->assertSame(60, Attendance::query()->count());
+        $this->assertSame(9, User::query()->whereIn('role', [User::ROLE_MANAGER, User::ROLE_CASHIER, User::ROLE_INVENTORY])->where('email', 'like', 'jooal.%@example.test')->count());
+        $this->assertSame(9, User::query()->whereIn('role', [User::ROLE_MANAGER, User::ROLE_CASHIER, User::ROLE_INVENTORY])->where('email', 'like', 'jooal.%@example.test')->distinct()->count('name'));
+        $this->assertSame(0, Transaction::query()->where('transaction_number', 'like', 'JOOAL-%')->whereRaw('grand_total <> (select coalesce(sum(line_total), 0) from transaction_items where transaction_items.transaction_id = transactions.id)')->count());
         $this->assertTrue(Menu::query()->where('slug', 'like', 'jooal-%')->get()->every(fn ($menu) => app(RecipeStockService::class)->menuRecipeReady($menu)));
         $availability = app(RecipeStockService::class);
         $bakeryMenu = Menu::query()->where('name', 'Banana Bread')->firstOrFail();

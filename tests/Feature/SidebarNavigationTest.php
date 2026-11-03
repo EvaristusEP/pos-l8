@@ -72,6 +72,32 @@ class SidebarNavigationTest extends TestCase
             ->assertDontSee('sidebar-inventory', false);
     }
 
+    public function test_pos_navigation_and_branch_options_follow_role_access(): void
+    {
+        $owner = User::factory()->create(['role' => User::ROLE_OWNER]);
+        $branch = \App\Models\Branch::create(['code' => 'OWN-01', 'name' => 'JOOAL Jakarta', 'timezone' => 'Asia/Jakarta', 'is_active' => true]);
+
+        $ownerHtml = $this->actingAs($owner)->withSession(['active_branch_id' => $branch->id])->get('/dashboard/pos')->assertOk()->getContent();
+        $this->assertStringContainsString('POS / Kasir', $ownerHtml);
+        $this->assertStringContainsString(route('dashboard.pos'), $ownerHtml);
+        $this->assertStringContainsString(route('orders.index'), $ownerHtml);
+        $this->assertStringContainsString(route('history'), $ownerHtml);
+        $this->assertStringContainsString('JOOAL Jakarta', $ownerHtml);
+        $this->assertStringContainsString('pos-branch-options', $ownerHtml);
+        $this->assertStringContainsString('aria-current="true"', $ownerHtml);
+
+        $cashier = User::factory()->create(['role' => User::ROLE_CASHIER]);
+        $cashier->branches()->attach($branch, ['is_default' => true, 'is_active' => true]);
+        $cashierHtml = $this->actingAs($cashier)->get('/dashboard/pos')->assertOk()->getContent();
+        $this->assertStringContainsString('POS / Kasir', $cashierHtml);
+        $this->assertStringContainsString('JOOAL Jakarta', $cashierHtml);
+
+        $inventory = User::factory()->create(['role' => User::ROLE_INVENTORY]);
+        $inventory->branches()->attach($branch, ['is_default' => true, 'is_active' => true]);
+        $inventoryHtml = $this->actingAs($inventory)->get('/dashboard/inventory')->assertOk()->getContent();
+        $this->assertStringNotContainsString('POS / Kasir', $inventoryHtml);
+        $this->assertStringNotContainsString(route('dashboard.pos'), $inventoryHtml);
+    }
     public function test_inventory_submenus_and_materials_have_exact_active_group_and_link(): void
     {
         $owner = User::factory()->create(['role' => User::ROLE_OWNER]);
@@ -148,17 +174,26 @@ class SidebarNavigationTest extends TestCase
         $sidebarStyles = file_get_contents(resource_path('views/components/pos-sidebar.blade.php'));
         $this->assertStringContainsString('body:has(.pos-sidebar) { --pos-sidebar-width: 72px; display: grid;', $sidebarStyles);
         $this->assertStringContainsString('.pos-sidebar { position: fixed !important;', $sidebarStyles);
+        $this->assertStringContainsString('> :not(.pos-sidebar-shell):not(script):not(style):not(dialog) { grid-column: 2;', $sidebarStyles, 'Top-layer dialogs must not inherit the page grid margin reset.');
+        $this->assertStringContainsString('> :not(.pos-sidebar-shell):not(script):not(style):not(dialog) { display: block;', $sidebarStyles, 'Mobile page layout rules must not force dialogs to display as page content.');
+        $this->assertStringNotContainsString('> :not(.pos-sidebar-shell):not(script):not(style) { grid-column: 2;', $sidebarStyles);
         $this->assertStringContainsString('height: 100vh; height: 100dvh;', $sidebarStyles);
         $this->assertStringContainsString('.pos-sidebar-nav { flex: 1 1 0%; min-height: 0; overflow-x: hidden; overflow-y: auto;', $sidebarStyles);
         $this->assertStringContainsString('grid-template-columns: var(--pos-sidebar-width) minmax(0, 1fr)', $sidebarStyles);
-        $this->assertStringContainsString('html[data-sidebar="expanded"] body:has(.pos-sidebar) { --pos-sidebar-width: 240px;', $sidebarStyles);
+        $this->assertStringContainsString('html[data-sidebar="expanded"] body:has(.pos-sidebar) { --pos-sidebar-width: 224px;', $sidebarStyles);
         $this->assertStringContainsString('--pos-sidebar-width: min(220px, 58vw)', $sidebarStyles);
         $this->assertStringContainsString('.pos-sidebar-footer { flex: 0 1 auto; min-height: 0; max-height: 40dvh;', $sidebarStyles);
         $this->assertStringContainsString('.pos-sidebar-admin-nav { display: flex; flex-direction: column; gap: .2rem;', $sidebarStyles);
-        $this->assertStringContainsString('min-height: 2.35rem; align-items: center; gap: .65rem;', $sidebarStyles);
-        $this->assertStringContainsString('body:has(.pos-sidebar) > :not(.pos-sidebar-shell):not(script):not(style) { grid-column: 2;', $sidebarStyles);
+        $this->assertStringContainsString('min-height: 2.25rem; align-items: center; gap: .55rem;', $sidebarStyles);
+        $this->assertStringContainsString('width: 2rem;', $sidebarStyles, 'Primary and footer menu icons share one fixed icon slot.');
+        $this->assertStringContainsString('flex: 0 0 2rem;', $sidebarStyles, 'Icon slots cannot shrink and shift menu labels.');
+        $this->assertStringContainsString('.pos-sidebar-nav > div > button > svg:first-child', $sidebarStyles, 'Grouped submenu toggles must match the rendered nav > div > button structure.');
+        $this->assertStringContainsString('.pos-sidebar-nav > div > button > span', $sidebarStyles, 'Grouped menu labels must flex between the icon and arrow.');
+        $this->assertStringNotContainsString('.pos-sidebar-nav > :is(a, div > button)', $sidebarStyles, 'A direct-child selector cannot match buttons nested inside group divs.');
+        $this->assertStringContainsString('.pos-sidebar-dashboard-link { min-height: 2.5rem; align-items: center; gap: .55rem; padding: .25rem .5rem;', $sidebarStyles, 'Dashboard uses the same icon and label alignment as the main navigation.');
+        $this->assertStringContainsString('body:has(.pos-sidebar) > :not(.pos-sidebar-shell):not(script):not(style):not(dialog) { grid-column: 2;', $sidebarStyles);
         $this->assertStringContainsString('pos-sidebar-branch-select-collapsed', $sidebarStyles);
-        $this->assertStringContainsString('aria-label="Cabang aktif"', $html);
+        $this->assertStringContainsString('aria-label="Pilih cabang', $html);
         $this->assertStringContainsString('this.expanded = true; this.notify(); this.groups[name] = true;', $html, 'Collapsed navigation groups remain reachable when clicked.');
         $this->assertSame(2, substr_count($html, '@click="toggle()"'), 'Render desktop and mobile sidebar toggles.');
         $this->assertStringContainsString('aria-label="Buka navigasi"', $html);
@@ -172,6 +207,20 @@ class SidebarNavigationTest extends TestCase
         $this->assertStringContainsString('setTimeout(() => { if (!this.$el.matches(\':hover\') && this.expanded)', $html);
         $this->assertStringContainsString('this.autoMode = !this.autoMode', $html);
         $this->assertStringContainsString('toggleAuto()', $html);
+        $this->assertStringContainsString('html[data-sidebar="collapsed"] .pos-sidebar-header { display: flex; justify-content: center;', $html);
+        $this->assertStringContainsString('html[data-sidebar="collapsed"] .pos-sidebar-dashboard-link,', $html);
+        $this->assertStringContainsString('html[data-sidebar="collapsed"] .pos-sidebar-nav > a,', $html);
+        $this->assertStringContainsString('html[data-sidebar="collapsed"] .pos-sidebar-footer form button', $html);
+        $this->assertStringContainsString('images/jooal-logo.png', $html);
+        $this->assertStringContainsString('pos-sidebar-logo-fallback', $html);
+        $this->assertStringContainsString('pos-sidebar-logo-mark-fallback', $html);
+        $this->assertStringContainsString("asset('images/jooal-logo.png')", $sidebarStyles);
+        $this->assertStringContainsString("this.closest('a').dataset.logoFailed='true'", $sidebarStyles);
+        $this->assertStringContainsString('pos-sidebar-brand-name', $sidebarStyles);
+        $this->assertStringContainsString('alt="" aria-hidden="true" class="pos-sidebar-logo"', $sidebarStyles);
+        $this->assertStringContainsString('x-show="expanded && !branchMenuOpen"', $html);
+        $this->assertStringContainsString('Daftar cabang', $html);
+        $this->assertStringContainsString('@if (optional($activeBranch)->id === $branch->id) aria-current="true"', $sidebarStyles);
     }
 
     public function test_settings_exposes_four_themes_and_sidebar_uses_palette_variables(): void
@@ -197,6 +246,8 @@ class SidebarNavigationTest extends TestCase
         $this->assertStringNotContainsString('dataset.theme =', $appJs, 'The app bundle must not overwrite the selected palette on page load.');
         $this->assertStringNotContainsString('DOMContentLoaded\', () => applyTheme', $appJs);
         $this->assertStringContainsString('applyTheme(storedChoice);', $sidebar);
+        $this->assertStringContainsString('document.addEventListener(\'DOMContentLoaded\', function () { applyTheme(localStorage.getItem(\'jooal-theme-choice\') || storedChoice); });', $sidebar);
+        $this->assertStringContainsString('document.querySelectorAll(\'[data-theme-select]\').forEach(function (select) { select.value = choice; });', $sidebar);
         $this->assertStringContainsString('if (select) applyTheme(select.value);', $sidebar);
         $this->assertStringNotContainsString('prefers-color-scheme', $sidebar);
         $this->assertStringContainsString("legacyMode === 'dark' ? 'dark-teal' : 'light'", $sidebar);

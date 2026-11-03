@@ -112,6 +112,20 @@ class BranchAccessTest extends TestCase
             ->assertSessionHasErrors('return_to');
     }
 
+    public function test_cannot_switch_branches_while_pos_cart_has_items(): void
+    {
+        $owner = User::factory()->create(['role' => User::ROLE_OWNER]);
+        $activeBranch = Branch::create(['code' => 'CART-01', 'name' => 'Cart Branch', 'timezone' => 'Asia/Jakarta', 'is_active' => true]);
+        $otherBranch = Branch::create(['code' => 'CART-02', 'name' => 'Other Branch', 'timezone' => 'Asia/Jakarta', 'is_active' => true]);
+
+        $this->actingAs($owner)
+            ->withSession(['active_branch_id' => $activeBranch->id, 'pos_cart' => [['menu_id' => 1, 'quantity' => 1]]])
+            ->from(route('dashboard.owner'))
+            ->post('/branches/select', ['branch_id' => $otherBranch->id])
+            ->assertRedirect(route('dashboard.owner'))
+            ->assertSessionHas('active_branch_id', $activeBranch->id)
+            ->assertSessionHasErrors('branch');
+    }
     public function test_branch_identity_and_active_state_are_protected_when_transactions_exist(): void
     {
         $owner = User::factory()->create(['role' => User::ROLE_OWNER]);

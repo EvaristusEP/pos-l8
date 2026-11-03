@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Services\BranchMenuCategoryCatalog;
 
 class Branch extends Model
 {
@@ -48,8 +49,11 @@ class Branch extends Model
 
     public function menus(): BelongsToMany
     {
+        $pivotColumns = ['price', 'is_available'];
+        if (app(BranchMenuCategoryCatalog::class)->storageAvailable()) $pivotColumns[] = 'catalog_category';
+
         return $this->belongsToMany(Menu::class, 'branch_menu')
-            ->withPivot(['price', 'is_available'])
+            ->withPivot($pivotColumns)
             ->withTimestamps();
     }
 

@@ -3,11 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Branch;
-use App\Models\Category;
 use App\Models\Menu;
 use App\Models\MenuVariant;
 use App\Models\Tag;
 use App\Services\BranchContext;
+use App\Services\BranchMenuCategoryCatalog;
 use App\Services\RecipeStockService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -23,22 +23,30 @@ class MenuManagementController extends Controller
     {
         $menus = Menu::query()->with(['category', 'variants', 'branches', 'tags'])->withCount('variants')->orderBy('name')->get();
         $activeBranch = $branchContext->activeFor(request()->user());
-        $menus->each(function (Menu $menu) use ($recipeStock, $activeBranch) {
+        $categoryCatalog = app(BranchMenuCategoryCatalog::class);
+        $catalogStorageAvailable = $categoryCatalog->storageAvailable();
+        $menus->each(function (Menu $menu) use ($recipeStock, $activeBranch, $categoryCatalog) {
             $menu->setAttribute('recipe_ready', $recipeStock->menuRecipeReady($menu));
-            if ($activeBranch) $menu->setAttribute('availability', $recipeStock->availability($menu, $activeBranch));
+            if ($activeBranch) {
+                $menu->setAttribute('availability', $recipeStock->availability($menu, $activeBranch));
+                $menu->setAttribute('catalog_category_display', $categoryCatalog->resolve($menu, $activeBranch));
+            }
         });
-        $categories = Category::query()->orderBy('sort_order')->orderBy('name')->get();
+        $categories = $activeBranch ? $this->categoriesInUse($menus, $activeBranch, $categoryCatalog) : collect();
+        $branchCategories = $activeBranch ? $categoryCatalog->categoriesFor($activeBranch) : [];
+        $legacyCategoryId = $activeBranch ? $categoryCatalog->legacyCategoryIdFor($activeBranch) : null;
         $branches = Branch::query()->orderBy('name')->get();
         $tags = Tag::query()->orderBy('name')->get();
 
-        return view('master-menu.index', compact('menus', 'categories', 'branches', 'tags'));
+        return view('master-menu.index', compact('menus', 'categories', 'branches', 'tags', 'activeBranch', 'branchCategories', 'legacyCategoryId', 'catalogStorageAvailable'));
     }
 
     public function store(Request $request): RedirectResponse
     {
-        $validated = $this->validatedMenu($request);
+        $activeBranch = app(BranchContext::class)->activeFor($request->user());
+        $validated = $this->validatedMenu($request, null, $activeBranch);
         $validated['is_active'] = false;
-        $validated['slug'] = Str::slug($validated['slug'] ?: $validated['name']);
+        $validated['slug'] = $this->uniqueMenuSlug(($validated['slug'] ?? null) ?: $validated['name']);
 
         $menu = DB::transaction(function () use ($validated, $request) {
             $menu = Menu::create($validated);
@@ -55,23 +63,31 @@ class MenuManagementController extends Controller
     public function edit(Menu $menu): View
     {
         $menu->load(['category', 'variants', 'branches', 'tags']);
-        $categories = Category::query()->orderBy('sort_order')->orderBy('name')->get();
+        $activeBranch = app(BranchContext::class)->activeFor(request()->user());
+        $categoryCatalog = app(BranchMenuCategoryCatalog::class);
+        $catalogStorageAvailable = $categoryCatalog->storageAvailable();
+        $branchCategories = $activeBranch ? $categoryCatalog->categoriesFor($activeBranch) : [];
+        $selectedBranchCategory = $activeBranch ? $categoryCatalog->resolve($menu, $activeBranch)['slug'] : null;
+        $legacyCategoryId = $menu->category_id;
         $branches = Branch::query()->orderBy('name')->get();
         $tags = Tag::query()->orderBy('name')->get();
 
-        return view('master-menu.edit', compact('menu', 'categories', 'branches', 'tags'));
+        return view('master-menu.edit', compact('menu', 'branches', 'tags', 'activeBranch', 'branchCategories', 'selectedBranchCategory', 'legacyCategoryId', 'catalogStorageAvailable'));
     }
 
     public function update(Request $request, Menu $menu): RedirectResponse
     {
+        $activeBranch = app(BranchContext::class)->activeFor($request->user());
         try {
-            $validated = $this->validatedMenu($request, $menu);
+            $validated = $this->validatedMenu($request, $menu, $activeBranch);
         } catch (ValidationException $exception) {
             return redirect()->route('master-menu.index', ['edit_menu' => $menu->getKey()])
                 ->withErrors($exception->errors())
                 ->withInput();
         }
-        $validated['slug'] = Str::slug($validated['slug'] ?: $validated['name']);
+        $validated['slug'] = filled($validated['slug'] ?? null)
+            ? Str::slug($validated['slug'])
+            : $menu->slug;
 
         DB::transaction(function () use ($validated, $request, $menu) {
             $locked = Menu::query()->whereKey($menu->getKey())->lockForUpdate()->firstOrFail();
@@ -100,15 +116,16 @@ class MenuManagementController extends Controller
             : 'Menu berhasil dinonaktifkan.');
     }
 
-    private function validatedMenu(Request $request, ?Menu $menu = null): array
+    private function validatedMenu(Request $request, ?Menu $menu = null, ?Branch $activeBranch = null): array
     {
         $slugRule = Rule::unique('menus', 'slug');
         if ($menu) {
             $slugRule = $slugRule->ignore($menu->getKey());
         }
 
-        return $request->validate([
+        $validated = $request->validate([
             'category_id' => ['required', 'integer', Rule::exists('categories', 'id')->where('is_active', true)],
+            'branch_category' => ['nullable', 'string', 'max:40'],
             'name' => ['required', 'string', 'max:150'],
             'slug' => ['nullable', 'string', 'max:150', $slugRule],
             'description' => ['nullable', 'string'],
@@ -125,6 +142,41 @@ class MenuManagementController extends Controller
             'tag_ids' => ['nullable', 'array'],
             'tag_ids.*' => ['integer', 'distinct', Rule::exists('tags', 'id')],
         ]);
+
+        if ($activeBranch) {
+            $categoryCatalog = app(BranchMenuCategoryCatalog::class);
+            if (! $categoryCatalog->storageAvailable()) {
+                throw ValidationException::withMessages(['branch_category' => 'Pilihan kategori cabang belum dapat disimpan. Terapkan migration kategori cabang terlebih dahulu.']);
+            }
+            $branchCategories = $categoryCatalog->categoriesFor($activeBranch);
+            if (! isset($branchCategories[$validated['branch_category'] ?? ''])) {
+                throw ValidationException::withMessages(['branch_category' => 'Pilih kategori yang sesuai dengan cabang aktif.']);
+            }
+
+            if ($menu) {
+                $validated['category_id'] = $menu->category_id;
+            } else {
+                $validated['category_id'] = $categoryCatalog->legacyCategoryIdFor($activeBranch);
+                if (! $validated['category_id']) {
+                    throw ValidationException::withMessages(['branch_category' => 'Kategori kompatibilitas produk belum tersedia. Lengkapi kategori data lama sebelum membuat produk.']);
+                }
+            }
+        }
+
+        return $validated;
+    }
+
+    private function uniqueMenuSlug(string $source): string
+    {
+        $base = Str::slug($source) ?: 'produk';
+        $slug = $base;
+        $suffix = 2;
+
+        while (Menu::query()->where('slug', $slug)->exists()) {
+            $slug = $base.'-'.$suffix++;
+        }
+
+        return $slug;
     }
 
     private function syncTags(Request $request, Menu $menu): void
@@ -162,10 +214,23 @@ class MenuManagementController extends Controller
     private function syncBranchSettings(Request $request, Menu $menu): void
     {
         $settings = $request->input('branch_settings', []);
+        $activeBranch = app(BranchContext::class)->activeFor($request->user());
         if (! $request->has('branch_settings')) {
+            if ($activeBranch && $request->filled('branch_category') && app(BranchMenuCategoryCatalog::class)->storageAvailable()) {
+                $existing = DB::table('branch_menu')->where('branch_id', $activeBranch->id)->where('menu_id', $menu->id)->first();
+                $menu->branches()->syncWithoutDetaching([$activeBranch->id => [
+                    'price' => $existing?->price,
+                    'is_available' => $existing?->is_available ?? true,
+                    'catalog_category' => $request->input('branch_category'),
+                ]]);
+            }
             return;
         }
         $pivot = [];
+        $storageAvailable = app(BranchMenuCategoryCatalog::class)->storageAvailable();
+        $existingCategories = $storageAvailable
+            ? DB::table('branch_menu')->where('menu_id', $menu->id)->pluck('catalog_category', 'branch_id')
+            : collect();
 
         foreach (Branch::query()->pluck('id') as $branchId) {
             $setting = $settings[$branchId] ?? [];
@@ -173,8 +238,30 @@ class MenuManagementController extends Controller
                 'price' => ($setting['price'] ?? '') === '' ? null : (float) $setting['price'],
                 'is_available' => (bool) ($setting['is_available'] ?? false),
             ];
+            if ($storageAvailable) {
+                $pivot[$branchId]['catalog_category'] = $activeBranch && (int) $branchId === (int) $activeBranch->id && $request->filled('branch_category')
+                    ? $request->input('branch_category')
+                    : ($existingCategories[$branchId] ?? null);
+            }
         }
 
         $menu->branches()->sync($pivot);
+    }
+
+    private function categoriesInUse($menus, Branch $branch, BranchMenuCategoryCatalog $catalog)
+    {
+        $categories = [];
+
+        foreach ($menus as $menu) {
+            $setting = $menu->branches->firstWhere('id', $branch->id);
+            if (! $menu->is_active || ! $setting || ! $setting->pivot->is_available) {
+                continue;
+            }
+
+            $resolved = $catalog->resolve($menu, $branch);
+            $categories[$resolved['slug']] = (object) ['id' => $resolved['slug'], 'name' => $resolved['name']];
+        }
+
+        return collect($categories)->sortBy('name')->values();
     }
 }

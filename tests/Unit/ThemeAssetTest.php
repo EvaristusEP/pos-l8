@@ -17,6 +17,7 @@ class ThemeAssetTest extends TestCase
 
         $this->assertStringContainsString(asset('build/'.$manifest['resources/css/app.css']['file']), $tags);
         $this->assertStringContainsString(asset('build/'.$manifest['resources/js/app.js']['file']), $tags);
+        $this->assertStringContainsString('?v=', $tags, 'Built asset URLs must change when their files are replaced.');
         $this->assertStringNotContainsString('app-B5fCZYdi.css', $tags);
     }
 
@@ -32,6 +33,22 @@ class ThemeAssetTest extends TestCase
         $this->assertStringContainsString($sourceRules, $servedCss);
         foreach (['--layout-content-max: none;', '.pos-filter {', '.pos-button {', 'dialog.crud-dialog {'] as $layoutRule) {
             $this->assertStringContainsString($layoutRule, $servedCss, 'The served stylesheet must include shared layout and control rules.');
+        }
+        foreach (['.pos-menu-list { grid-template-columns: repeat(2, minmax(0, 1fr));', '@media (min-width: 1024px) { .pos-menu-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }', '@media (min-width: 1600px) { .pos-menu-list { grid-template-columns: repeat(4, minmax(0, 1fr)); }'] as $gridRule) {
+            $this->assertStringContainsString($gridRule, $sourceCss, 'The POS catalog should adapt its column count by viewport.');
+            $this->assertStringContainsString($gridRule, $servedCss, 'The served stylesheet should include the POS catalog grid.');
+        }
+        foreach (['.attendance-report-filter { display: grid;', '.inventory-panel { min-width: 0; overflow: hidden;'] as $responsiveRule) {
+            $this->assertStringContainsString($responsiveRule, $sourceCss);
+            $this->assertStringContainsString($responsiveRule, $servedCss);
+        }
+        foreach (['.pos-filter > button { grid-column: -2 / -1;', '.orders-filter { grid-template-columns: repeat(7, minmax(0, 1fr));', '.pos-filter > button { grid-column: 1 / -1; justify-self: stretch;', '.inventory-filter-row > button { grid-column: -2 / -1;'] as $filterRule) {
+            $this->assertStringContainsString($filterRule, $sourceCss);
+            $this->assertStringContainsString($filterRule, $servedCss);
+        }
+        foreach (['.attendance-employee-grid { display: grid;', '@media (min-width: 768px) { .attendance-employee-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }'] as $employeeGridRule) {
+            $this->assertStringContainsString($employeeGridRule, $sourceCss);
+            $this->assertStringContainsString($employeeGridRule, $servedCss);
         }
 
         $palettes = [
@@ -84,5 +101,21 @@ class ThemeAssetTest extends TestCase
         $this->assertStringContainsString('root.dataset.themePalette = palette;', $sidebar);
         $this->assertStringContainsString("localStorage.setItem('jooal-theme-choice', choice);", $sidebar);
         $this->assertStringContainsString("var storedChoice = localStorage.getItem('jooal-theme-choice');", $sidebar);
+    }
+
+    public function test_crud_dialogs_are_compact_by_default_and_wide_forms_opt_in(): void
+    {
+        $sourceCss = file_get_contents(resource_path('css/app.css'));
+        $manifest = json_decode(file_get_contents(public_path('build/manifest.json')), true);
+        $servedCss = file_get_contents(public_path('build/'.$manifest['resources/css/app.css']['file']));
+        $component = file_get_contents(resource_path('views/components/crud-dialog.blade.php'));
+
+        foreach (['width: min(40rem, calc(100vw - 2rem));', 'max-width: calc(100vw - 2rem);', 'dialog.crud-dialog-wide { width: min(56rem, calc(100vw - 2rem)); }', 'dialog.crud-dialog::backdrop { background: rgba(2, 12, 9, .58); }'] as $rule) {
+            $this->assertStringContainsString($rule, $sourceCss);
+            $this->assertStringContainsString($rule, $servedCss);
+        }
+        $this->assertStringContainsString('$size === \'wide\' ? \' crud-dialog-wide\' : \'\'', $component);
+        $this->assertStringContainsString('max-height: 90dvh;', $sourceCss);
+        $this->assertStringContainsString('overflow-y: auto;', $sourceCss);
     }
 }

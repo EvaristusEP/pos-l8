@@ -3,9 +3,10 @@
     'title',
     'description' => null,
     'openOnLoad' => false,
+    'size' => 'default',
 ])
 
-<dialog id="{{ $id }}" class="crud-dialog" aria-labelledby="{{ $id }}-title" @if($openOnLoad) data-open-on-load @endif>
+<dialog id="{{ $id }}" class="crud-dialog{{ $size === 'wide' ? ' crud-dialog-wide' : '' }}" style="box-sizing: border-box; width: min({{ $size === 'wide' ? '56rem' : '40rem' }}, calc(100vw - 2rem)); max-width: calc(100vw - 2rem); margin: auto;" aria-labelledby="{{ $id }}-title" @if($openOnLoad) data-open-on-load @endif>
     <header class="crud-dialog-header flex items-start justify-between gap-4 border-b border-slate-200 bg-white p-4 sm:p-5">
         <div class="min-w-0">
             <h2 id="{{ $id }}-title" class="text-lg font-extrabold text-[#123c35] sm:text-xl">{{ $title }}</h2>

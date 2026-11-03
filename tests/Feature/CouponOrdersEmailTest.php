@@ -56,8 +56,9 @@ class CouponOrdersEmailTest extends TestCase
         $coupon = Coupon::create($this->couponPayload('DIALOG'));
 
         $this->actingAs($owner)->get(route('coupons.index'))->assertOk()
-            ->assertSee('<dialog id="coupon-create-dialog"', false)
-            ->assertSee('coupon-edit-dialog-'.$coupon->id, false)
+            ->assertSee('<dialog id="coupon-create-dialog" aria-labelledby="coupon-create-title" class="crud-dialog crud-dialog-wide"', false)
+            ->assertSee('<dialog id="coupon-edit-dialog-'.$coupon->id.'"', false)
+            ->assertSee('class="crud-dialog crud-dialog-wide"', false)
             ->assertSee('showModal()', false);
     }
 

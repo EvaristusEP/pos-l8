@@ -18,6 +18,10 @@ class AttendanceController extends Controller
     public function index(Request $request, BranchContext $context): View
     {
         $user = $request->user();
+        if ($user->isAdmin()) {
+            return $this->report($request, $context);
+        }
+
         $activeBranch = $context->activeFor($user);
         $openAttendance = Attendance::query()->with('branch')
             ->where('user_id', $user->id)->whereNull('check_out_at')->latest('check_in_at')->first();
@@ -76,18 +80,24 @@ class AttendanceController extends Controller
             'date_from' => ['nullable', 'date_format:Y-m-d'],
             'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
+            'status' => ['nullable', 'in:checked_in,checked_out'],
         ], [
             'date_from.date_format' => 'Tanggal awal tidak valid.',
             'date_to.date_format' => 'Tanggal akhir tidak valid.',
             'date_to.after_or_equal' => 'Tanggal akhir harus sama atau setelah tanggal awal.',
         ]);
 
-        $from = $validated['date_from'] ?? today()->toDateString();
+        $from = $validated['date_from'] ?? now()->toDateString();
         $to = $validated['date_to'] ?? $from;
+        if (Carbon::parse($to)->lt(Carbon::parse($from))) {
+            throw ValidationException::withMessages([
+                'date_to' => 'Tanggal akhir harus sama atau setelah tanggal awal.',
+            ]);
+        }
         $user = $request->user();
         $activeBranch = null;
 
-        if ($user->isOwner()) {
+        if ($user->isAdmin()) {
             $branches = Branch::query()->orderBy('name')->get();
             $selectedBranch = ! empty($validated['branch_id'])
                 ? Branch::query()->findOrFail($validated['branch_id'])
@@ -109,8 +119,47 @@ class AttendanceController extends Controller
 
         $totalSessions = (clone $query)->count();
         $openSessions = (clone $query)->whereNull('check_out_at')->count();
-        $attendances = $query->orderByDesc('check_in_at')->paginate(30)->withQueryString();
+        $checkedOutSessions = (clone $query)->whereNotNull('check_out_at')->count();
+        $employeeQuery = User::query()
+            ->where('is_active', true)
+            ->whereIn('role', [User::ROLE_MANAGER, User::ROLE_CASHIER, User::ROLE_INVENTORY])
+            ->whereHas('branches', function ($branchQuery) use ($selectedBranch) {
+                $branchQuery->where('branches.is_active', true)->where('branch_user.is_active', true);
+                if ($selectedBranch) $branchQuery->where('branches.id', $selectedBranch->id);
+            });
+        $employees = (clone $employeeQuery)
+            ->with(['branches' => function ($branchQuery) use ($selectedBranch) {
+                $branchQuery->where('branches.is_active', true)->where('branch_user.is_active', true);
+                if ($selectedBranch) $branchQuery->where('branches.id', $selectedBranch->id);
+                $branchQuery->orderBy('branches.name');
+            }])
+            ->orderBy('name')
+            ->get();
+        $eligibleEmployees = (clone $employeeQuery)->count();
+        $employeesWithAttendance = (clone $query)
+            ->whereIn('user_id', (clone $employeeQuery)->select('users.id'))
+            ->distinct('user_id')
+            ->count('user_id');
+        $employeesWithoutAttendance = max(0, $eligibleEmployees - $employeesWithAttendance);
+        $employeesCheckedIn = (clone $query)
+            ->whereNull('check_out_at')
+            ->whereIn('user_id', (clone $employeeQuery)->select('users.id'))
+            ->distinct('user_id')
+            ->count('user_id');
+        $employeesCheckedOut = (clone $query)
+            ->whereNotNull('check_out_at')
+            ->whereIn('user_id', (clone $employeeQuery)->select('users.id'))
+            ->distinct('user_id')
+            ->count('user_id');
 
-        return view('attendance.report', compact('branches', 'selectedBranch', 'from', 'to', 'totalSessions', 'openSessions', 'attendances'));
+        if (($validated['status'] ?? null) === Attendance::STATUS_CHECKED_IN) {
+            $query->whereNull('check_out_at');
+        } elseif (($validated['status'] ?? null) === Attendance::STATUS_CHECKED_OUT) {
+            $query->whereNotNull('check_out_at');
+        }
+        $attendances = $query->orderByDesc('check_in_at')->paginate(30)->withQueryString();
+        $filterRoute = $request->routeIs('attendance.index') ? 'attendance.index' : 'reports.attendance';
+
+        return view('attendance.report', compact('branches', 'selectedBranch', 'employees', 'from', 'to', 'totalSessions', 'openSessions', 'checkedOutSessions', 'employeesCheckedIn', 'employeesCheckedOut', 'employeesWithoutAttendance', 'attendances', 'filterRoute'));
     }
 }

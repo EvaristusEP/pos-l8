@@ -60,6 +60,28 @@ class InventoryTest extends TestCase
             ->assertOk()->assertSee('Tambah Bahan')->assertSee('Bahan baku terpusat');
     }
 
+    public function test_inventory_screens_render_responsive_containers_and_locally_scrollable_tables(): void
+    {
+        [$branch] = $this->branchAndIngredient();
+        $owner = User::factory()->create(['role' => User::ROLE_OWNER]);
+
+        foreach ([
+            route('inventory.stock-in.index'),
+            route('inventory.stocks.index'),
+            route('inventory.movements.index'),
+        ] as $path) {
+            $html = $this->actingAs($owner)->get($path)->assertOk()->getContent();
+            $this->assertStringContainsString('inventory-page-content', $html);
+            $this->assertStringContainsString('overflow-x-auto', $html);
+            $this->assertStringContainsString('inventory-panel', $html);
+        }
+
+        $styles = file_get_contents(resource_path('css/app.css'));
+        $this->assertStringContainsString('.inventory-panel { min-width: 0; overflow: hidden;', $styles);
+        $this->assertStringContainsString('.inventory-panel .overflow-x-auto', $styles);
+        $this->assertStringContainsString('@media (min-width: 1280px) { .inventory-filter-row', $styles);
+    }
+
     public function test_stock_in_and_adjustment_create_movement_and_update_only_selected_branch(): void
     {
         [$branch, $ingredient] = $this->branchAndIngredient();
