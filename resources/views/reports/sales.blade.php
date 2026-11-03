@@ -118,7 +118,7 @@
             <div class="mt-4 flex items-center justify-between gap-3 {{ $index > 0 ? 'border-t border-slate-100 pt-4' : '' }}">
                 <div class="flex min-w-0 items-center gap-3">
                     <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-emerald-50 text-sm font-extrabold text-emerald-800">{{ $index + 1 }}</span>
-                    <p class="truncate font-bold text-slate-950">{{ $product->menu?->name ?? 'Menu tidak tersedia' }}</p>
+                    <p class="truncate font-bold text-slate-950">{{ optional($product->menu)->name ?? 'Menu tidak tersedia' }}</p>
                 </div>
                 <strong class="whitespace-nowrap text-emerald-800">{{ $product->quantity_sold }} terjual</strong>
             </div>

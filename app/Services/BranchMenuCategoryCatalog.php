@@ -46,7 +46,8 @@ class BranchMenuCategoryCatalog
     public function resolve(Menu $menu, Branch $branch): array
     {
         $categories = $this->categoriesFor($branch);
-        $storedSlug = $menu->branches->firstWhere('id', $branch->id)?->pivot?->catalog_category;
+        $branchMenu = $menu->branches->firstWhere('id', $branch->id);
+        $storedSlug = $branchMenu && $branchMenu->pivot ? $branchMenu->pivot->catalog_category : null;
 
         if ($storedSlug && isset($categories[$storedSlug])) {
             return ['slug' => $storedSlug, 'name' => $categories[$storedSlug]];
@@ -70,7 +71,7 @@ class BranchMenuCategoryCatalog
         $identity = strtolower($branch->code.' '.$branch->name);
 
         foreach (['bakery', 'coffee', 'gelato'] as $type) {
-            if (str_contains($identity, $type)) {
+            if (strpos($identity, $type) !== false) {
                 return $type;
             }
         }

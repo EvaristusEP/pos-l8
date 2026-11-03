@@ -219,8 +219,8 @@ class MenuManagementController extends Controller
             if ($activeBranch && $request->filled('branch_category') && app(BranchMenuCategoryCatalog::class)->storageAvailable()) {
                 $existing = DB::table('branch_menu')->where('branch_id', $activeBranch->id)->where('menu_id', $menu->id)->first();
                 $menu->branches()->syncWithoutDetaching([$activeBranch->id => [
-                    'price' => $existing?->price,
-                    'is_available' => $existing?->is_available ?? true,
+                    'price' => optional($existing)->price,
+                    'is_available' => optional($existing)->is_available ?? true,
                     'catalog_category' => $request->input('branch_category'),
                 ]]);
             }

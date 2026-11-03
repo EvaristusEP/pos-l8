@@ -59,7 +59,14 @@ class CouponOrdersEmailTest extends TestCase
             ->assertSee('<dialog id="coupon-create-dialog" aria-labelledby="coupon-create-title" class="crud-dialog crud-dialog-wide"', false)
             ->assertSee('<dialog id="coupon-edit-dialog-'.$coupon->id.'"', false)
             ->assertSee('class="crud-dialog crud-dialog-wide"', false)
+            ->assertSee('class="coupon-form-grid"', false)
+            ->assertSee('data-coupon-close="coupon-create-dialog"', false)
+            ->assertSee('Batal', false)
             ->assertSee('showModal()', false);
+
+        $styles = file_get_contents(resource_path('css/app.css'));
+        $this->assertStringContainsString('@media (min-width: 640px) { .coupon-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }', $styles);
+        $this->assertStringContainsString('.coupon-form-grid { display: grid;', $styles);
     }
 
     public function test_coupon_checkout_records_same_discount_in_transaction_and_preserves_refund_total(): void
