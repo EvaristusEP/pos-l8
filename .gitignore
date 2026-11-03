@@ -13,3 +13,7 @@ npm-debug.log
 yarn-error.log
 /.idea
 /.vscode
+
+# Local database migration backup and scripts
+/backup_jooal_demo.sql
+/scripts/

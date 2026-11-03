@@ -733,7 +733,7 @@ class DashboardController extends Controller
                     }
 
                     $menu->setAttribute('display_price', $this->menuPriceForBranch($menu, $activeBranch));
-                    $menu->setAttribute('source_category_slug', $menu->category ? $menu->category->slug : null);
+                    $menu->setAttribute('source_category_slug', optional($menu->category)->slug);
                     $recipeStock = app(RecipeStockService::class);
                     $availability = $recipeStock->availability($menu, $activeBranch);
                     $menu->setAttribute('recipe_ready', $availability['status'] !== 'recipe_incomplete');
